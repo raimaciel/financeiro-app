@@ -796,6 +796,35 @@ Permitir que os administradores editem o nome completo, status de ativação da 
 ### Pendências
 - Nenhuma pendência identificada. Produção 100% atualizada e operacional.
 
+---
+
+## 19. [2026-09-01 17:18] - Compactação e Reorganização do Modal de Cartão de Crédito (Grid Responsivo)
+
+### O que foi feito
+- **Reorganização do Formulário em Grid de 2 Colunas (`frontend/src/pages/CreditCards.tsx`)**:
+  - `Nome do Cartão *`: Mantido em largura total no topo.
+  - Linha 2 (`grid grid-cols-1 sm:grid-cols-2 gap-3`): **Tipo de Cartão** (Físico/Virtual) + **Tier do Cartão** (Standard, Gold, Platinum, Black, Infinite).
+  - Linha 3 (`grid grid-cols-1 sm:grid-cols-2 gap-3`): **Banco / Emissor** + **Bandeira (Opcional com logos visuais)**.
+  - Linha 4 (`grid grid-cols-1 sm:grid-cols-2 gap-3`): **Últimos 4 dígitos** + **Instituição (Opcional)**.
+  - Linha 5: **Limite Total (R$)** em largura total.
+  - Linha 6 (`grid grid-cols-2 gap-3`): **Dia do Fechamento (1-31) \*** + **Dia do Vencimento (1-31) \***.
+  - Linha 7: **Foto / Imagem do Cartão (Opcional)** com preview compacto e botão de upload.
+  - Linha 8: **Cor de Fundo do Cartão** com seletores de cor otimizados.
+- **Benefícios**:
+  - Redução de ~35% na altura vertical do modal.
+  - Responsividade completa em mobile e telas menores (`sm:grid-cols-2`).
+- **Validação e Deploy**:
+  - Testes do frontend passando: **57 testes em 12 arquivos (100%)**.
+  - Build de produção gerado e deploy publicado no Cloudflare Pages: `https://financeiro-app-6wf.pages.dev` e preview `https://b75ff115.financeiro-app-6wf.pages.dev`.
+
+### Arquivos modificados
+- `frontend/src/pages/CreditCards.tsx`: Ajustado o layout do formulário para grid de 2 colunas compacto.
+- `backend/PROGRESSO.md` e `PROGRESSO.md`: Registro da compactação e novo deploy.
+
+### Pendências
+- Nenhuma pendência.
+
+
 
 
 
