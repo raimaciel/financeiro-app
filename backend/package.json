@@ -1,0 +1,28 @@
+{
+    "name": "backend",
+    "type": "module",
+    "scripts": {
+        "dev": "wrangler dev",
+        "deploy": "wrangler deploy --minify",
+        "cf-typegen": "wrangler types --env-interface CloudflareBindings",
+        "test": "vitest run",
+        "test:watch": "vitest",
+        "test:coverage": "vitest run --coverage"
+    },
+    "dependencies": {
+        "bcryptjs": "^3.0.3",
+        "hono": "^4.13.5",
+        "jose": "^6.2.10",
+        "jsonwebtoken": "^9.0.3",
+        "zod": "^4.5.4"
+    },
+    "devDependencies": {
+        "@types/bcryptjs": "^2.4.6",
+        "@types/jsonwebtoken": "^9.0.10",
+        "@types/node": "^26.4.0",
+        "@vitest/coverage-v8": "^4.1.11",
+        "vite-tsconfig-paths": "^6.1.1",
+        "vitest": "^4.1.11",
+        "wrangler": "^4.127.1"
+    }
+}

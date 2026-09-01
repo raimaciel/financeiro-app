@@ -1,0 +1,24 @@
+{
+	"$schema": "node_modules/wrangler/config-schema.json",
+	"name": "backend",
+	"main": "src/index.ts",
+	"compatibility_date": "2026-08-30",
+	"compatibility_flags": [
+		"nodejs_compat"
+	],
+	"d1_databases": [
+		{
+			"binding": "financeiro_db",
+			"database_name": "financeiro-db",
+			"database_id": "c34bd38c-eac8-4ff7-837a-eddecb9390bf",
+			"remote": true
+		}
+	],
+	"r2_buckets": [
+		{
+			"bucket_name": "financeiro-comprovantes",
+			"binding": "financeiro_comprovantes",
+			"remote": true
+		}
+	]
+}
