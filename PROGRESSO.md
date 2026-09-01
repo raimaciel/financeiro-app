@@ -764,6 +764,39 @@ Permitir que os administradores editem o nome completo, status de ativação da 
 ### Pendências
 - Nenhuma pendência.
 
+---
+
+## 18. [2026-09-01 17:10] - Deploy em Produção (Cloudflare Pages, Worker e D1) e Commit Git
+
+### O que foi feito
+1. **Banco de Dados Cloudflare D1 Remoto (`financeiro_db`)**:
+   - Executada a migração remota adicionando as novas colunas à tabela `credit_cards`:
+     - `card_type VARCHAR(10) DEFAULT 'physical'`
+     - `last_four_digits VARCHAR(4)`
+     - `bank_name VARCHAR(100)`
+     - `institution VARCHAR(100)`
+     - `card_tier VARCHAR(50) DEFAULT 'standard'`
+     - `card_image_url TEXT`
+2. **Backend Cloudflare Worker**:
+   - Executado o deploy do Worker via `wrangler deploy --minify` para o endpoint de produção `https://backend.raimaciel.workers.dev`.
+3. **Frontend Cloudflare Pages (`financeiro-app-6wf.pages.dev`)**:
+   - Gerado build estático de produção otimizado com `npm run build`.
+   - Publicado diretamente no Cloudflare Pages via `wrangler pages deploy dist --project-name financeiro-app --branch main`.
+   - Deploy ativo e disponível no domínio principal `https://financeiro-app-6wf.pages.dev` e preview `https://0256e1bc.financeiro-app-6wf.pages.dev`.
+4. **Git Version Control**:
+   - Criado `.gitignore` na raiz do repositório protegendo `node_modules`, `dist`, `.wrangler`, `.env` e `.dev.vars`.
+   - Criado commit com todas as modificações: `feat: atualiza modal de novo cartão com 12 campos`.
+
+### Arquivos criados
+- `.gitignore`: Arquivo de ignore na raiz do projeto.
+
+### Arquivos modificados
+- `backend/PROGRESSO.md` e `PROGRESSO.md`: Registro da publicação em produção.
+
+### Pendências
+- Nenhuma pendência identificada. Produção 100% atualizada e operacional.
+
+
 
 
 
