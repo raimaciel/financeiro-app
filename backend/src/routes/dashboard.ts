@@ -1,3 +1,13 @@
+/**
+ * =================================================================================================
+ * DASHBOARD FINANCEIRO - MÉTRICAS, GRÁFICOS E FATURAS CONSOLIDADAS
+ * 
+ * Regra Unificada de Faturas:
+ * As faturas exibidas no Dashboard utilizam exatamente a mesma competência contábil (date LIKE 'YYYY-MM-%')
+ * e os mesmos vínculos (transactions.credit_card_id = credit_cards.id) que a tela de Cartões e o Modal de Faturas.
+ * =================================================================================================
+ */
+
 import { Hono } from 'hono';
 import { authMiddleware } from '../auth';
 import type { Bindings, Variables } from '../auth';

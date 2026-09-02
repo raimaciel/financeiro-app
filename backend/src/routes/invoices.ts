@@ -1,3 +1,16 @@
+/**
+ * =================================================================================================
+ * REGRA DE NEGÓCIO UNIFICADA - CÁLCULO DE FATURAS DE CARTÃO DE CRÉDITO
+ * 
+ * Regra: Toda transação do tipo 'expense' vinculada ao cartão (transactions.credit_card_id = card.id)
+ * pertence à fatura do mês de referência X (YYYY-MM) se sua data (transactions.date) pertencer ao mês
+ * ('YYYY-MM-%') ou cair dentro da janela de fechamento calculada (start_date <= date <= closing_date).
+ * 
+ * Essa mesma regra é compartilhada de ponta a ponta com o Dashboard, a Tela de Cartões (CreditCards.tsx)
+ * e o Modal de Faturas, garantindo 100% de paridade e eliminando divergências de exibição.
+ * =================================================================================================
+ */
+
 import { Hono } from 'hono';
 import { authMiddleware } from '../auth';
 import type { Bindings, Variables } from '../auth';
