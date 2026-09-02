@@ -53,9 +53,9 @@ import {
   X,
   Lock,
   Clock,
-  Globe,
-  Hourglass,
   Layers,
+  Cloud,
+  Zap,
 } from "lucide-react";
 
 // Paleta de cores para cartões
@@ -96,14 +96,13 @@ function formatMonthYear(refMonth: string): string {
   return `${monthNames[idx] || mm} ${yyyy}`;
 }
 
-// Helper para calcular tempo restante de cartão temporário
+// Helper para calcular validade restante de cartão temporário/virtual
 function getTemporaryCardStatus(expiresAt?: string | null): {
   isExpired: boolean;
   label: string;
-  badgeClass: string;
 } {
   if (!expiresAt) {
-    return { isExpired: false, label: "24h", badgeClass: "bg-amber-500/30 text-amber-200 border-amber-400/40" };
+    return { isExpired: false, label: "24h" };
   }
 
   const expireTime = new Date(expiresAt).getTime();
@@ -111,33 +110,30 @@ function getTemporaryCardStatus(expiresAt?: string | null): {
   const diffMs = expireTime - now;
 
   if (diffMs <= 0) {
-    return { isExpired: true, label: "Expirado", badgeClass: "bg-slate-600/60 text-slate-300 border-slate-500/40" };
+    return { isExpired: true, label: "Expirado" };
   }
 
   const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
-  const diffMins = Math.floor((diffMs % (1000 * 60 * 60)) / (1000 * 60));
+  const diffDays = Math.floor(diffHours / 24);
 
-  if (diffHours >= 24) {
-    const diffDays = Math.floor(diffHours / 24);
+  if (diffDays >= 1) {
     return {
       isExpired: false,
-      label: `24h (restam ${diffDays}d)`,
-      badgeClass: "bg-amber-500/30 text-amber-200 border-amber-400/40",
+      label: `Expira em ${diffDays} ${diffDays === 1 ? "dia" : "dias"}`,
     };
   }
 
   if (diffHours > 0) {
     return {
       isExpired: false,
-      label: `24h (restam ${diffHours}h)`,
-      badgeClass: "bg-amber-500/30 text-amber-200 border-amber-400/40",
+      label: `Expira em ${diffHours}h`,
     };
   }
 
+  const diffMins = Math.floor((diffMs % (1000 * 60 * 60)) / (1000 * 60));
   return {
     isExpired: false,
-    label: `24h (restam ${diffMins}m)`,
-    badgeClass: "bg-rose-500/40 text-rose-200 border-rose-400/50 animate-pulse",
+    label: `Expira em ${diffMins}m`,
   };
 }
 
@@ -251,7 +247,7 @@ const EMPTY_FORM: FormState = {
 type FormMode = "create" | "edit";
 interface ToastState { message: string; type: "success" | "error" }
 
-// Card Visual Item
+// Card Visual Item com Badges Aprimorados (Físico: Azul / Virtual: Púrpura)
 function CardItem({
   card,
   workspaceId,
@@ -294,14 +290,14 @@ function CardItem({
   const hasImage = !!(card.card_image_url || card.cardImageUrl || card.image_url || card.imageUrl);
   const cardImageSrc = card.imageUrl || card.image_url || (card.card_image_url ? `/cards/${card.id}/image` : null);
 
-  const tempStatus = rawCardType === "virtual_temporary" ? getTemporaryCardStatus(expiresAt) : null;
+  const tempStatus = (rawCardType === "virtual_temporary" || !!expiresAt) ? getTemporaryCardStatus(expiresAt) : null;
 
   return (
     <div className="flex flex-col gap-2">
       <div
         onClick={() => onOpenInvoices(card)}
         className={`relative rounded-2xl p-5 shadow-lg flex flex-col justify-between min-h-[210px] transition-all hover:-translate-y-1 hover:shadow-xl cursor-pointer group select-none overflow-hidden ${
-          tempStatus?.isExpired ? "opacity-75 grayscale-[30%]" : ""
+          tempStatus?.isExpired ? "opacity-75 grayscale-[35%]" : ""
         }`}
         style={{
           backgroundColor: bg,
@@ -352,8 +348,8 @@ function CardItem({
               {card.name}
             </h3>
 
-            {/* Rastreabilidade de Cartão Virtual (🔒 Cadastrado em: ...) */}
-            {isVirtual && registeredFor && (
+            {/* Rastreabilidade / Cadastrado em */}
+            {isVirtual && (
               <div
                 className="inline-flex items-center gap-1.5 px-2 py-0.5 mt-1 rounded-md text-[11px] font-semibold border backdrop-blur-md shadow-2xs max-w-[210px] truncate"
                 style={{
@@ -361,11 +357,17 @@ function CardItem({
                   borderColor: "rgba(255, 255, 255, 0.25)",
                   color: "#ffffff",
                 }}
-                title={`Cadastrado em: ${registeredFor}`}
+                title={registeredFor ? `Cadastrado em: ${registeredFor}` : "Cartão Virtual"}
               >
                 <Lock className="h-3 w-3 text-emerald-400 shrink-0" />
                 <span className="truncate">
-                  Cadastrado em: <strong>{registeredFor}</strong>
+                  {registeredFor ? (
+                    <>Cadastrado em: <strong>{registeredFor}</strong></>
+                  ) : card.created_at ? (
+                    <>Cadastrado em: <strong>{formatDateBR(card.created_at.slice(0, 10))}</strong></>
+                  ) : (
+                    <>Cartão Virtual</>
+                  )}
                 </span>
               </div>
             )}
@@ -378,37 +380,30 @@ function CardItem({
             )}
           </div>
 
+          {/* BADGES NO CANTO SUPERIOR: FÍSICO (AZUL) / VIRTUAL (VIOLETA/PÚRPURA) */}
           <div className="flex items-center gap-1.5">
-            {/* Badge de Tipo de Cartão Específico */}
-            {rawCardType === "virtual_permanent" && (
-              <span className="text-[10px] font-bold px-2 py-0.5 rounded-full border bg-blue-500/30 text-blue-100 border-blue-400/40 backdrop-blur-xs flex items-center gap-1">
-                ♾️ Virtual
+            {!isVirtual ? (
+              <span className="text-[10px] font-bold px-2 py-0.5 rounded-full border shadow-2xs backdrop-blur-xs flex items-center gap-1 bg-blue-600/90 text-white border-blue-400/50">
+                <CreditCardIcon className="h-3 w-3" />
+                Físico
+              </span>
+            ) : (
+              <span className="text-[10px] font-bold px-2 py-0.5 rounded-full border shadow-2xs backdrop-blur-xs flex items-center gap-1 bg-purple-600/90 text-white border-purple-400/50">
+                <Cloud className="h-3 w-3" />
+                Virtual
               </span>
             )}
-            {rawCardType === "virtual_temporary" && (
+
+            {/* Badge de Validade / Expiração para Temporários */}
+            {tempStatus && (
               <span
-                className={`text-[10px] font-bold px-2 py-0.5 rounded-full border backdrop-blur-xs flex items-center gap-1 ${
-                  tempStatus?.badgeClass || "bg-amber-500/30 text-amber-200 border-amber-400/40"
+                className={`text-[10px] font-bold px-2 py-0.5 rounded-full border shadow-2xs flex items-center gap-1 ${
+                  tempStatus.isExpired
+                    ? "bg-red-600 text-white border-red-500 font-extrabold animate-pulse"
+                    : "bg-amber-500/90 text-white border-amber-300"
                 }`}
               >
-                ⏱️ {tempStatus?.label || "24h"}
-              </span>
-            )}
-            {rawCardType === "virtual_app_linked" && (
-              <span className="text-[10px] font-bold px-2 py-0.5 rounded-full border bg-purple-500/30 text-purple-100 border-purple-400/40 backdrop-blur-xs flex items-center gap-1">
-                🔗 App / Site
-              </span>
-            )}
-            {(rawCardType === "physical" || rawCardType === "virtual") && (
-              <span
-                className="text-[11px] font-semibold px-2 py-0.5 rounded-full border shadow-2xs backdrop-blur-xs flex items-center gap-1"
-                style={{
-                  backgroundColor: "rgba(255, 255, 255, 0.2)",
-                  borderColor: "rgba(255, 255, 255, 0.3)",
-                  color: hasImage ? "#ffffff" : textColor,
-                }}
-              >
-                {rawCardType === "virtual" ? "💳 Virtual" : "🪪 Físico"}
+                {tempStatus.isExpired ? "⚠️ Expirado" : `⏱️ ${tempStatus.label}`}
               </span>
             )}
 
@@ -515,15 +510,17 @@ export default function CreditCards() {
   const [selectedWorkspaceId, setSelectedWorkspaceId] = useState<string>("");
   const [toast, setToast] = useState<ToastState | null>(null);
 
-  // Filtros com persistência no LocalStorage
+  // Filtros com persistência no sessionStorage (mantém na sessão conforme solicitado)
   const [filters, setFilters] = useState<CardFilterState>(() => {
     try {
-      const saved = typeof window !== "undefined" && window.localStorage ? window.localStorage.getItem("credit_cards_filters") : null;
-      if (saved) {
-        return { ...DEFAULT_FILTERS, ...JSON.parse(saved) };
+      if (typeof window !== "undefined" && window.sessionStorage) {
+        const saved = window.sessionStorage.getItem("credit_cards_filters");
+        if (saved) {
+          return { ...DEFAULT_FILTERS, ...JSON.parse(saved) };
+        }
       }
     } catch (e) {
-      console.warn("Erro ao recuperar filtros salvos:", e);
+      console.warn("Erro ao recuperar filtros da sessão:", e);
     }
     return DEFAULT_FILTERS;
   });
@@ -532,11 +529,11 @@ export default function CreditCards() {
     setFilters((prev) => {
       const next = typeof updater === "function" ? updater(prev) : updater;
       try {
-        if (typeof window !== "undefined" && window.localStorage) {
-          window.localStorage.setItem("credit_cards_filters", JSON.stringify(next));
+        if (typeof window !== "undefined" && window.sessionStorage) {
+          window.sessionStorage.setItem("credit_cards_filters", JSON.stringify(next));
         }
       } catch (e) {
-        console.warn("Erro ao salvar filtros no localStorage:", e);
+        console.warn("Erro ao salvar filtros na sessão:", e);
       }
       return next;
     });
@@ -624,7 +621,7 @@ export default function CreditCards() {
     return Array.from(new Set(list)).sort((a, b) => a.localeCompare(b));
   }, [cards]);
 
-  // Filtragem e Ordenação com useMemo
+  // Filtragem e Ordenação Reativa em Tempo Real com useMemo
   const filteredAndSortedCards = useMemo(() => {
     const nowTime = Date.now();
 
@@ -650,24 +647,25 @@ export default function CreditCards() {
         if ((card.brand || "") !== filters.brand) return false;
       }
 
-      // 4. Tipo de Cartão
+      // 4. Tipo de Cartão (Físico / Virtual / Todos)
       if (filters.cardType !== "all") {
         const type = card.card_type || card.cardType || "physical";
-        if (filters.cardType === "physical") {
-          if (type !== "physical") return false;
-        } else if (filters.cardType === "virtual_permanent") {
-          if (type !== "virtual_permanent" && type !== "virtual") return false;
-        } else if (filters.cardType === "virtual_temporary") {
-          if (type !== "virtual_temporary") return false;
-        } else if (filters.cardType === "virtual_app_linked") {
-          if (type !== "virtual_app_linked") return false;
-        }
+        const isVirt = type.startsWith("virtual") || type === "virtual";
+        if (filters.cardType === "physical" && isVirt) return false;
+        if (filters.cardType === "virtual" && !isVirt) return false;
+        if (filters.cardType === "virtual_permanent" && type !== "virtual_permanent" && type !== "virtual") return false;
+        if (filters.cardType === "virtual_temporary" && type !== "virtual_temporary") return false;
+        if (filters.cardType === "virtual_app_linked" && type !== "virtual_app_linked") return false;
       }
 
-      // 5. Cadastrado em
-      if (filters.registeredFor !== "all") {
-        const reg = card.registered_for || card.registeredFor || "";
-        if (reg !== filters.registeredFor) return false;
+      // 5. Cadastrado em (Intervalo / Período)
+      if (filters.period !== "all") {
+        if (!card.created_at) return true;
+        const cardTime = new Date(card.created_at).getTime();
+        const diffDays = (nowTime - cardTime) / (1000 * 60 * 60 * 24);
+        if (filters.period === "7d" && diffDays > 7) return false;
+        if (filters.period === "30d" && diffDays > 30) return false;
+        if (filters.period === "90d" && diffDays > 90) return false;
       }
 
       return true;
@@ -675,15 +673,15 @@ export default function CreditCards() {
 
     // Ordenação
     return [...filtered].sort((a, b) => {
-      const isTemporaryA = (a.card_type || a.cardType) === "virtual_temporary";
-      const isTemporaryB = (b.card_type || b.cardType) === "virtual_temporary";
+      const isTemporaryA = (a.card_type || a.cardType) === "virtual_temporary" || !!(a.expires_at || a.expiresAt);
+      const isTemporaryB = (b.card_type || b.cardType) === "virtual_temporary" || !!(b.expires_at || b.expiresAt);
       const expiresAtA = a.expires_at || a.expiresAt;
       const expiresAtB = b.expires_at || b.expiresAt;
 
       const isExpiredA = isTemporaryA && !!expiresAtA && new Date(expiresAtA).getTime() < nowTime;
       const isExpiredB = isTemporaryB && !!expiresAtB && new Date(expiresAtB).getTime() < nowTime;
 
-      // Se um dos cartões for temporário expirado, vai para o final da lista (exceto se ordenação for por expiração)
+      // Cartões expirados são movidos automaticamente para o final da lista (exceto se ordenação for explícita por expiração)
       if (filters.sortBy !== "expires_at") {
         if (isExpiredA && !isExpiredB) return 1;
         if (!isExpiredA && isExpiredB) return -1;
@@ -744,7 +742,6 @@ export default function CreditCards() {
   });
 
   const openCreate = () => {
-    // Default de expiração: 24 horas a partir de agora no formato datetime-local (YYYY-MM-DDTHH:mm)
     const in24h = new Date(Date.now() + 24 * 60 * 60 * 1000);
     const in24hISO = in24h.toISOString().slice(0, 16);
 
@@ -1006,7 +1003,7 @@ export default function CreditCards() {
         </div>
       </div>
 
-      {/* BARRA DE FILTROS E ORDENAÇÃO */}
+      {/* FEATURE 1: BARRA DE FILTROS E ORDENAÇÃO (Posicionada acima da grid de cartões) */}
       {cards.length > 0 && (
         <CreditCardFilters
           cards={cards}
@@ -1017,7 +1014,7 @@ export default function CreditCards() {
         />
       )}
 
-      {/* Listagem de Cartões */}
+      {/* FEATURE 2: GRID DE CARTÕES COM BADGES VISUAIS (Físico / Virtual) */}
       {loadingCards ? (
         <div className="flex items-center justify-center py-20">
           <Loader2 className="h-8 w-8 animate-spin text-primary" />

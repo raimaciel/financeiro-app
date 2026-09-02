@@ -23,13 +23,17 @@ import {
   ArrowDown,
   RotateCcw,
   SlidersHorizontal,
+  Building2,
+  Calendar,
+  CreditCard as CreditCardIcon,
+  Cloud,
 } from "lucide-react";
 
 export interface CardFilterState {
   bank: string;
   brand: string;
   cardType: string;
-  registeredFor: string;
+  period: string; // 'all' | '7d' | '30d' | '90d'
   sortBy: "name" | "limit" | "due_day" | "closing_day" | "expires_at";
   sortDir: "asc" | "desc";
   search: string;
@@ -39,7 +43,7 @@ export const DEFAULT_FILTERS: CardFilterState = {
   bank: "all",
   brand: "all",
   cardType: "all",
-  registeredFor: "all",
+  period: "all",
   sortBy: "name",
   sortDir: "asc",
   search: "",
@@ -62,7 +66,7 @@ export function CreditCardFilters({
 }: CreditCardFiltersProps) {
   const [mobileOpen, setMobileOpen] = useState(false);
 
-  // Extrair opções únicas a partir dos cartões existentes
+  // Extrair opções únicas a partir dos cartões cadastrados
   const uniqueBanks = Array.from(
     new Set(
       cards
@@ -79,19 +83,11 @@ export function CreditCardFilters({
     )
   ).sort((a, b) => a.localeCompare(b));
 
-  const uniqueRegisteredFor = Array.from(
-    new Set(
-      cards
-        .map((c) => c.registered_for || c.registeredFor)
-        .filter((r): r is string => !!r && r.trim() !== "")
-    )
-  ).sort((a, b) => a.localeCompare(b));
-
   const hasActiveFilters =
     filters.bank !== "all" ||
     filters.brand !== "all" ||
     filters.cardType !== "all" ||
-    filters.registeredFor !== "all" ||
+    filters.period !== "all" ||
     filters.search !== "" ||
     filters.sortBy !== "name" ||
     filters.sortDir !== "asc";
@@ -128,9 +124,10 @@ export function CreditCardFilters({
                 </DialogHeader>
                 <div className="py-3 space-y-3">
                   <div className="flex flex-wrap items-center gap-2.5">
+                    {/* Busca */}
                     <div className="w-full">
                       <Input
-                        placeholder="Buscar cartão..."
+                        placeholder="Buscar cartão por nome, banco..."
                         value={filters.search}
                         onChange={(e) => {
                           const val = e.target.value;
@@ -139,6 +136,8 @@ export function CreditCardFilters({
                         className="h-9 text-xs bg-white"
                       />
                     </div>
+
+                    {/* Banco */}
                     <div className="w-full">
                       <Select
                         value={filters.bank}
@@ -159,6 +158,37 @@ export function CreditCardFilters({
                         </SelectContent>
                       </Select>
                     </div>
+
+                    {/* Bandeira */}
+                    <div className="w-full">
+                      <Select
+                        value={filters.brand}
+                        onValueChange={(val) =>
+                          onFilterChange((prev) => ({ ...prev, brand: val }))
+                        }
+                      >
+                        <SelectTrigger className="h-9 text-xs bg-white">
+                          <SelectValue placeholder="Bandeira" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="all">💳 Todas as Bandeiras</SelectItem>
+                          <SelectItem value="Visa">Visa</SelectItem>
+                          <SelectItem value="Mastercard">Mastercard</SelectItem>
+                          <SelectItem value="Elo">Elo</SelectItem>
+                          <SelectItem value="American Express">American Express</SelectItem>
+                          <SelectItem value="Hipercard">Hipercard</SelectItem>
+                          {uniqueBrands
+                            .filter((b) => !["Visa", "Mastercard", "Elo", "American Express", "Hipercard"].includes(b))
+                            .map((b) => (
+                              <SelectItem key={b} value={b}>
+                                {b}
+                              </SelectItem>
+                            ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    {/* Tipo: Físico / Virtual / Todos */}
                     <div className="w-full">
                       <Select
                         value={filters.cardType}
@@ -172,9 +202,51 @@ export function CreditCardFilters({
                         <SelectContent>
                           <SelectItem value="all">📂 Todos os Tipos</SelectItem>
                           <SelectItem value="physical">🪪 Físico</SelectItem>
+                          <SelectItem value="virtual">⚡ Virtual (Todos)</SelectItem>
                           <SelectItem value="virtual_permanent">♾️ Virtual Permanente</SelectItem>
-                          <SelectItem value="virtual_temporary">⏱️ Virtual Temporário (24h)</SelectItem>
-                          <SelectItem value="virtual_app_linked">🔗 Virtual Vinculado a App</SelectItem>
+                          <SelectItem value="virtual_temporary">⏱️ Virtual Temporário</SelectItem>
+                          <SelectItem value="virtual_app_linked">🔗 Virtual App/Site</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    {/* Cadastrado em (Período) */}
+                    <div className="w-full">
+                      <Select
+                        value={filters.period}
+                        onValueChange={(val) =>
+                          onFilterChange((prev) => ({ ...prev, period: val }))
+                        }
+                      >
+                        <SelectTrigger className="h-9 text-xs bg-white">
+                          <SelectValue placeholder="Cadastrado em" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="all">📅 Cadastro: Todos os períodos</SelectItem>
+                          <SelectItem value="7d">Últimos 7 dias</SelectItem>
+                          <SelectItem value="30d">Últimos 30 dias</SelectItem>
+                          <SelectItem value="90d">Últimos 90 dias</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    {/* Ordenação */}
+                    <div className="w-full">
+                      <Select
+                        value={filters.sortBy}
+                        onValueChange={(val: any) =>
+                          onFilterChange((prev) => ({ ...prev, sortBy: val }))
+                        }
+                      >
+                        <SelectTrigger className="h-9 text-xs bg-white">
+                          <SelectValue placeholder="Ordenar por" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="name">Nome (A-Z / Z-A)</SelectItem>
+                          <SelectItem value="limit">Limite (Maior / Menor)</SelectItem>
+                          <SelectItem value="due_day">Data de Vencimento</SelectItem>
+                          <SelectItem value="closing_day">Data de Fechamento</SelectItem>
+                          <SelectItem value="expires_at">Data de Expiração</SelectItem>
                         </SelectContent>
                       </Select>
                     </div>
@@ -249,17 +321,24 @@ export function CreditCardFilters({
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">💳 Todas Bandeiras</SelectItem>
-                {uniqueBrands.map((b) => (
-                  <SelectItem key={b} value={b}>
-                    {b}
-                  </SelectItem>
-                ))}
+                <SelectItem value="Visa">Visa</SelectItem>
+                <SelectItem value="Mastercard">Mastercard</SelectItem>
+                <SelectItem value="Elo">Elo</SelectItem>
+                <SelectItem value="American Express">American Express</SelectItem>
+                <SelectItem value="Hipercard">Hipercard</SelectItem>
+                {uniqueBrands
+                  .filter((b) => !["Visa", "Mastercard", "Elo", "American Express", "Hipercard"].includes(b))
+                  .map((b) => (
+                    <SelectItem key={b} value={b}>
+                      {b}
+                    </SelectItem>
+                  ))}
               </SelectContent>
             </Select>
           </div>
 
-          {/* 4. Tipo de Cartão */}
-          <div className="w-full sm:w-44">
+          {/* 4. Tipo de Cartão (Físico / Virtual / Todos) */}
+          <div className="w-full sm:w-40">
             <Select
               value={filters.cardType}
               onValueChange={(val) =>
@@ -272,36 +351,33 @@ export function CreditCardFilters({
               <SelectContent>
                 <SelectItem value="all">📂 Todos os Tipos</SelectItem>
                 <SelectItem value="physical">🪪 Físico</SelectItem>
+                <SelectItem value="virtual">⚡ Virtual (Todos)</SelectItem>
                 <SelectItem value="virtual_permanent">♾️ Virtual Permanente</SelectItem>
-                <SelectItem value="virtual_temporary">⏱️ Virtual Temporário (24h)</SelectItem>
-                <SelectItem value="virtual_app_linked">🔗 Virtual Vinculado a App</SelectItem>
+                <SelectItem value="virtual_temporary">⏱️ Virtual Temporário</SelectItem>
+                <SelectItem value="virtual_app_linked">🔗 Virtual App/Site</SelectItem>
               </SelectContent>
             </Select>
           </div>
 
-          {/* 5. Cadastrado em (aparece dinamicamente se houver cartões virtuais) */}
-          {uniqueRegisteredFor.length > 0 && (
-            <div className="w-full sm:w-44">
-              <Select
-                value={filters.registeredFor}
-                onValueChange={(val) =>
-                  onFilterChange((prev) => ({ ...prev, registeredFor: val }))
-                }
-              >
-                <SelectTrigger className="h-9 text-xs bg-white">
-                  <SelectValue placeholder="Cadastrado em" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">🔒 Cadastrado: Todos</SelectItem>
-                  {uniqueRegisteredFor.map((r) => (
-                    <SelectItem key={r} value={r}>
-                      {r}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-          )}
+          {/* 5. Cadastrado em (Intervalo / Período) */}
+          <div className="w-full sm:w-44">
+            <Select
+              value={filters.period}
+              onValueChange={(val) =>
+                onFilterChange((prev) => ({ ...prev, period: val }))
+              }
+            >
+              <SelectTrigger className="h-9 text-xs bg-white">
+                <SelectValue placeholder="Cadastrado em" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">📅 Cadastro: Todos</SelectItem>
+                <SelectItem value="7d">Últimos 7 dias</SelectItem>
+                <SelectItem value="30d">Últimos 30 dias</SelectItem>
+                <SelectItem value="90d">Últimos 90 dias</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
 
           {/* 6. Ordenação */}
           <div className="w-full sm:w-44">
@@ -315,10 +391,10 @@ export function CreditCardFilters({
                 <SelectValue placeholder="Ordenar por" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="name">Nome (A-Z)</SelectItem>
-                <SelectItem value="limit">Limite Total</SelectItem>
-                <SelectItem value="due_day">Dia do Vencimento</SelectItem>
-                <SelectItem value="closing_day">Dia do Fechamento</SelectItem>
+                <SelectItem value="name">Nome (A-Z / Z-A)</SelectItem>
+                <SelectItem value="limit">Limite (Maior/Menor)</SelectItem>
+                <SelectItem value="due_day">Data de Vencimento</SelectItem>
+                <SelectItem value="closing_day">Data de Fechamento</SelectItem>
                 <SelectItem value="expires_at">Data de Expiração</SelectItem>
               </SelectContent>
             </Select>

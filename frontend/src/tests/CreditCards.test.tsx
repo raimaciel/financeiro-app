@@ -164,10 +164,10 @@ describe("Página de Cartões de Crédito e Faturas", () => {
       expect(screen.getByRole("heading", { name: "Cartão Compra Única" })).toBeInTheDocument();
     });
 
-    // Verificar badges de tipo
+    // FEATURE 2: Badges Visuais (Físico: Azul / Virtual: Púrpura)
     expect(screen.getAllByText(/Físico/i).length).toBeGreaterThan(0);
     expect(screen.getAllByText(/Virtual/i).length).toBeGreaterThan(0);
-    expect(screen.getAllByText(/24h/i).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/Expira em/i).length).toBeGreaterThan(0);
 
     // Rastreabilidade de virtual (🔒 Cadastrado em: Netflix e Amazon)
     expect(screen.getAllByText(/Cadastrado em:/i).length).toBeGreaterThan(0);
