@@ -876,6 +876,37 @@ Permitir que os administradores editem o nome completo, status de ativação da 
 ### Pendências
 - Nenhuma pendência.
 
+---
+
+## 22. [2026-09-02 09:07] - Implementação da Rota GET /cards/:id/invoices no Backend
+
+### O que foi feito
+1. **Diagnóstico da Causa Raiz**:
+   - As chamadas `GET /cards/:id/invoices` do frontend retornavam 404 (Not Found) porque no backend a rota de listagem de faturas estava registrada apenas como `GET /workspaces/:workspaceId/cards/:cardId/invoices`.
+2. **Correções Aplicadas**:
+   - Implementado o handler universal `getCardInvoicesHandler` em `backend/src/routes/invoices.ts`, mapeado para:
+     - `GET /cards/:id/invoices`
+     - `GET /cards/:cardId/invoices`
+     - `GET /workspaces/:workspaceId/cards/:cardId/invoices`
+     - `GET /workspaces/:workspaceId/credit-cards/:cardId/invoices`
+   - A rota busca o cartão no banco através do vínculo `workspace_members` do usuário autenticado (`userId`).
+   - Se o cartão for encontrado, calcula e retorna as faturas detalhadas com status, total, datas e lançamentos.
+   - Se o cartão não tiver faturas ou não for encontrado, retorna `200 OK` com array vazio `[]`.
+   - Adicionados testes de integração em `backend/tests/invoices.test.ts`.
+3. **Validação e Deploy**:
+   - **157 testes passando no Backend (100%) em 21 arquivos**.
+   - Deploy do Cloudflare Worker realizado com sucesso: `https://backend.raimaciel.workers.dev`.
+   - Commit enviado para o GitHub: `09befc3`.
+
+### Arquivos modificados
+- `backend/src/routes/invoices.ts`: Mapeamento das rotas `GET /cards/:id/invoices` e `GET /cards/:cardId/invoices`.
+- `backend/tests/invoices.test.ts`: Testes de integração para os novos endpoints de faturas por ID de cartão.
+- `backend/PROGRESSO.md` e `PROGRESSO.md`: Registro da implementação e deploy.
+
+### Pendências
+- Nenhuma pendência.
+
+
 
 
 
