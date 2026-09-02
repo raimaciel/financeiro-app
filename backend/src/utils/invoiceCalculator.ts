@@ -62,10 +62,9 @@ export function formatDateISO(date: Date): string {
 /**
  * Calcula o período completo de uma fatura de cartão de crédito.
  * 
- * Regra padrão de mercado:
+ * Regra padrão:
  * - A fatura do referenceMonth (ex: 2026-10) fecha no dia `closingDay` de referenceMonth (ex: 05/10/2026).
- * - O período de compras é de (dia seguinte ao fechamento anterior) até (dia de fechamento).
- *   Ex: se closingDay = 5, compras de 06/09 a 05/10 caem na fatura de 10/2026.
+ * - O período de compras é do dia seguinte ao fechamento anterior até o dia de fechamento.
  * - O vencimento ocorre no `dueDay`. Se dueDay > closingDay, vence no mesmo mês do fechamento; se dueDay <= closingDay, vence no mês seguinte.
  */
 export function calculateInvoicePeriod(
@@ -89,8 +88,6 @@ export function calculateInvoicePeriod(
 	startDate.setDate(startDate.getDate() + 1);
 
 	// Data de vencimento
-	// Se o dia de vencimento for maior que o dia de fechamento, vence no mesmo mês do fechamento.
-	// Se for menor ou igual, vence no mês subsequente.
 	let dueYear = year;
 	let dueMonth = month - 1; // zero-indexed
 	if (dueDay <= closingDay) {
@@ -130,15 +127,17 @@ export function calculateInvoicePeriod(
 }
 
 /**
- * Determina a qual fatura (reference_month) uma transação pertence com base na data da compra e no closing_day.
+ * Determina a qual fatura (reference_month) uma transação pertence com base na data e no closing_day.
  */
-export function getInvoiceMonthForTransaction(transactionDate: string, closingDay: number): string {
+export function getInvoiceMonthForTransaction(transactionDate: string, closingDay?: number): string {
+	if (!transactionDate) return formatDateISO(new Date()).slice(0, 7);
+	if (!closingDay) return transactionDate.slice(0, 7);
+
 	const [yStr, mStr, dStr] = transactionDate.split('-');
 	let year = parseInt(yStr, 10);
 	let month = parseInt(mStr, 10);
 	const day = parseInt(dStr, 10);
 
-	// Se a compra foi feita após o dia de fechamento, cai na fatura do mês seguinte
 	if (day > closingDay) {
 		month += 1;
 		if (month > 12) {
@@ -156,7 +155,7 @@ const MONTH_NAMES = [
 ];
 
 /**
- * Calcula a previsão de faturas futuras (forecast) para os próximos N meses com base nas transações parceladas.
+ * Calcula a previsão de faturas futuras (forecast) para os próximos N meses com base nas transações.
  */
 export function calculateInvoiceForecast(
 	closingDay: number,
@@ -169,7 +168,7 @@ export function calculateInvoiceForecast(
 	let currentRefMonth = startRefMonth;
 	if (!currentRefMonth) {
 		const currentISO = formatDateISO(now);
-		currentRefMonth = getInvoiceMonthForTransaction(currentISO, closingDay);
+		currentRefMonth = currentISO.slice(0, 7);
 	}
 
 	const [startYearStr, startMonthStr] = currentRefMonth.split('-');
@@ -193,9 +192,10 @@ export function calculateInvoiceForecast(
 
 	for (const tx of transactions) {
 		if (tx.type === 'expense' && tx.amount > 0) {
-			const txRefMonth = getInvoiceMonthForTransaction(tx.date, closingDay);
-			if (monthBuckets[txRefMonth]) {
-				monthBuckets[txRefMonth].push({
+			// Atribui pelo mês de competência ou período
+			const txMonth = (tx.date || '').slice(0, 7);
+			if (monthBuckets[txMonth]) {
+				monthBuckets[txMonth].push({
 					transaction_id: tx.id,
 					description: tx.description || 'Lançamento sem descrição',
 					amount: Number(tx.amount.toFixed(2)),

@@ -214,8 +214,8 @@ dashboardRouter.get('/workspaces/:workspaceId/dashboard', async (c) => {
 
 			// Buscar transações dessa fatura
 			const sumRes = await db
-				.prepare('SELECT COALESCE(SUM(amount), 0) as total FROM transactions WHERE credit_card_id = ? AND workspace_id = ? AND date >= ? AND date <= ?')
-				.bind(card.id, workspaceId, startDateStr, closingDateStr)
+				.prepare("SELECT COALESCE(SUM(amount), 0) as total FROM transactions WHERE credit_card_id = ? AND workspace_id = ? AND type = 'expense' AND date LIKE ?")
+				.bind(card.id, workspaceId, `${selectedMonth}-%`)
 				.first<{ total: number }>();
 
 			const invoiceTotal = Number((sumRes?.total || 0).toFixed(2));

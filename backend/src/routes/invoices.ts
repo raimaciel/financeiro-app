@@ -3,7 +3,6 @@ import { authMiddleware } from '../auth';
 import type { Bindings, Variables } from '../auth';
 import {
 	calculateInvoicePeriod,
-	getInvoiceMonthForTransaction,
 	calculateInvoiceForecast,
 	formatDateISO,
 } from '../utils/invoiceCalculator';
@@ -24,7 +23,7 @@ async function getWorkspaceMemberRole(db: D1Database, workspaceId: string, userI
 }
 
 // ------------------------------------------------------------------------------------------------
-// 1. GET /workspaces/:workspaceId/credit-cards/:cardId/invoice/current - Fatura do mês atual (aberta/vigente)
+// 1. GET /workspaces/:workspaceId/credit-cards/:cardId/invoice/current - Fatura do mês atual
 // ------------------------------------------------------------------------------------------------
 invoicesRouter.get('/workspaces/:workspaceId/credit-cards/:cardId/invoice/current', async (c) => {
 	try {
@@ -51,10 +50,10 @@ invoicesRouter.get('/workspaces/:workspaceId/credit-cards/:cardId/invoice/curren
 		const closingDay = Number(card.closing_day);
 		const dueDay = Number(card.due_day);
 		const now = new Date();
-		const currentMonthRef = getInvoiceMonthForTransaction(formatDateISO(now), closingDay);
+		const currentMonthRef = formatDateISO(now).slice(0, 7);
 		const period = calculateInvoicePeriod(closingDay, dueDay, currentMonthRef, now);
 
-		// 2. Busca todas as transações do cartão
+		// 2. Busca transações do cartão da competência atual ou período
 		const { results: rawTransactions } = await db
 			.prepare(`
 				SELECT 
@@ -68,20 +67,9 @@ invoicesRouter.get('/workspaces/:workspaceId/credit-cards/:cardId/invoice/curren
 			.bind(cardId, workspaceId)
 			.all<any>();
 
-		const allCardTxs = rawTransactions || [];
-
-		// Transações que caem na fatura atual
-		const currentInvoiceTxs = allCardTxs.filter((tx) => {
-			return tx.date >= period.start_date && tx.date <= period.closing_date;
-		});
-
-		// Transações lançadas após o fechamento (que vão para a próxima fatura)
-		const nextInvoiceTxs = allCardTxs.filter((tx) => {
-			return tx.date > period.closing_date;
-		});
-
+		const allTxs = rawTransactions || [];
+		const currentInvoiceTxs = allTxs.filter((tx) => (tx.date && tx.date.startsWith(currentMonthRef)) || (tx.date >= period.start_date && tx.date <= period.closing_date));
 		const currentTotal = currentInvoiceTxs.reduce((acc, curr) => acc + Number(curr.amount || 0), 0);
-		const nextTotal = nextInvoiceTxs.reduce((acc, curr) => acc + Number(curr.amount || 0), 0);
 
 		// Verifica status no banco (se já foi marcada como paga)
 		const dbInvoice = await db
@@ -89,10 +77,8 @@ invoicesRouter.get('/workspaces/:workspaceId/credit-cards/:cardId/invoice/curren
 			.bind(cardId, currentMonthRef)
 			.first<any>();
 
-		let status = period.status;
-		if (dbInvoice && dbInvoice.status === 'paid') {
-			status = 'paid' as any;
-		}
+		const isPaid = dbInvoice?.status === 'paid';
+		const status = isPaid ? 'paid' : period.status;
 
 		return c.json({
 			card: {
@@ -101,25 +87,41 @@ invoicesRouter.get('/workspaces/:workspaceId/credit-cards/:cardId/invoice/curren
 				brand: card.brand,
 				color: card.color,
 				limit_amount: card.limit_amount,
-				closing_day: closingDay,
-				due_day: dueDay,
+				closing_day: card.closing_day,
+				due_day: card.due_day,
 			},
 			period,
-			status,
-			total_amount: Number(currentTotal.toFixed(2)),
-			next_cycle_open_amount: Number(nextTotal.toFixed(2)),
-			transactions_count: currentInvoiceTxs.length,
-			paid_at: dbInvoice?.paid_at || null,
+			current_invoice: {
+				id: dbInvoice?.id || `inv_${cardId}_${currentMonthRef}`,
+				reference_month: currentMonthRef,
+				total_amount: Number(currentTotal.toFixed(2)),
+				status,
+				paid_at: dbInvoice?.paid_at || null,
+				transactions_count: currentInvoiceTxs.length,
+			},
 			transactions: currentInvoiceTxs,
+			// Compatibilidade com campos de nível raiz
+			card_id: cardId,
+			workspace_id: workspaceId,
+			reference_month: currentMonthRef,
+			month: period.month,
+			year: period.year,
+			start_date: period.start_date,
+			closing_date: period.closing_date,
+			due_date: period.due_date,
+			days_until_closing: period.days_until_closing,
+			days_until_due: period.days_until_due,
+			total_amount: Number(currentTotal.toFixed(2)),
+			transactions_count: currentInvoiceTxs.length,
 		});
-	} catch (err: any) {
+	} catch (err) {
 		console.error('Erro ao buscar fatura atual:', err);
-		return c.json({ error: 'Erro ao buscar fatura atual do cartão' }, 500);
+		return c.json({ error: 'Erro ao carregar fatura atual' }, 500);
 	}
 });
 
 // ------------------------------------------------------------------------------------------------
-// 2. GET /workspaces/:workspaceId/credit-cards/:cardId/invoice/history - Histórico de faturas anteriores
+// 2. GET /workspaces/:workspaceId/credit-cards/:cardId/invoice/history - Histórico
 // ------------------------------------------------------------------------------------------------
 invoicesRouter.get('/workspaces/:workspaceId/credit-cards/:cardId/invoice/history', async (c) => {
 	try {
@@ -133,103 +135,8 @@ invoicesRouter.get('/workspaces/:workspaceId/credit-cards/:cardId/invoice/histor
 			return c.json({ error: 'Acesso negado. Você não é membro deste workspace' }, 403);
 		}
 
-		const monthsCount = Math.min(24, Math.max(1, parseInt(c.req.query('months') || '6', 10)));
-
-		const card = await db
-			.prepare('SELECT id, name, brand, color, closing_day, due_day FROM credit_cards WHERE id = ? AND workspace_id = ?')
-			.bind(cardId, workspaceId)
-			.first<any>();
-
-		if (!card) {
-			return c.json({ error: 'Cartão de crédito não encontrado' }, 404);
-		}
-
-		const closingDay = Number(card.closing_day);
-		const dueDay = Number(card.due_day);
-		const now = new Date();
-
-		// Busca todas as transações do cartão
-		const { results: rawTransactions } = await db
-			.prepare(`
-				SELECT 
-					t.id, t.description, t.amount, t.type, t.date, t.installments, t.installment_current,
-					c.name as category_name, c.color as category_color
-				FROM transactions t
-				LEFT JOIN categories c ON c.id = t.category_id
-				WHERE t.credit_card_id = ? AND t.workspace_id = ? AND t.type = 'expense'
-				ORDER BY t.date DESC
-			`)
-			.bind(cardId, workspaceId)
-			.all<any>();
-
-		const allCardTxs = rawTransactions || [];
-
-		// Busca faturas salvas no banco
-		const { results: dbInvoices } = await db
-			.prepare('SELECT id, reference_month, status, paid_at FROM invoices WHERE credit_card_id = ?')
-			.bind(cardId)
-			.all<any>();
-
-		const dbInvoiceMap = new Map<string, { id: string; status: string; paid_at: string | null }>();
-		(dbInvoices || []).forEach((inv) => {
-			dbInvoiceMap.set(inv.reference_month, { id: inv.id, status: inv.status, paid_at: inv.paid_at });
-		});
-
-		// Gera os últimos N meses anteriores ao mês corrente
-		const historyList = [];
-		const currentMonthRef = getInvoiceMonthForTransaction(formatDateISO(now), closingDay);
-		const [curY, curM] = currentMonthRef.split('-').map(Number);
-
-		for (let offset = 1; offset <= monthsCount; offset++) {
-			const d = new Date(curY, curM - 1 - offset, 1);
-			const refMonth = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-			const period = calculateInvoicePeriod(closingDay, dueDay, refMonth, now);
-
-			const txs = allCardTxs.filter((tx) => tx.date >= period.start_date && tx.date <= period.closing_date);
-			const totalAmount = txs.reduce((acc, curr) => acc + Number(curr.amount || 0), 0);
-
-			const saved = dbInvoiceMap.get(refMonth);
-			let status = saved?.status || (period.is_closed_by_date ? 'closed' : 'open');
-
-			historyList.push({
-				id: saved?.id || `inv_${cardId}_${refMonth}`,
-				reference_month: refMonth,
-				period,
-				total_amount: Number(totalAmount.toFixed(2)),
-				status,
-				paid_at: saved?.paid_at || null,
-				transactions_count: txs.length,
-			});
-		}
-
-		return c.json({
-			card_id: cardId,
-			card_name: card.name,
-			months: monthsCount,
-			history: historyList,
-		});
-	} catch (err: any) {
-		console.error('Erro ao buscar histórico de faturas:', err);
-		return c.json({ error: 'Erro ao buscar histórico de faturas' }, 500);
-	}
-});
-
-// ------------------------------------------------------------------------------------------------
-// 3. GET /workspaces/:workspaceId/credit-cards/:cardId/invoice/forecast - Previsão de faturas futuras
-// ------------------------------------------------------------------------------------------------
-invoicesRouter.get('/workspaces/:workspaceId/credit-cards/:cardId/invoice/forecast', async (c) => {
-	try {
-		const workspaceId = c.req.param('workspaceId');
-		const cardId = c.req.param('cardId');
-		const userId = String(c.get('userId'));
-		const db = c.env.financeiro_db || (c.env as any).DB;
-
-		const role = await getWorkspaceMemberRole(db, workspaceId, userId);
-		if (!role) {
-			return c.json({ error: 'Acesso negado. Você não é membro deste workspace' }, 403);
-		}
-
-		const monthsCount = Math.min(24, Math.max(1, parseInt(c.req.query('months') || '6', 10)));
+		const monthsParam = parseInt(c.req.query('months') || '6', 10);
+		const monthsCount = Math.min(Math.max(1, monthsParam), 24);
 
 		const card = await db
 			.prepare('SELECT id, name, brand, color, limit_amount, closing_day, due_day FROM credit_cards WHERE id = ? AND workspace_id = ?')
@@ -244,12 +151,101 @@ invoicesRouter.get('/workspaces/:workspaceId/credit-cards/:cardId/invoice/foreca
 		const dueDay = Number(card.due_day);
 		const now = new Date();
 
-		// Busca todas as transações do cartão
 		const { results: rawTransactions } = await db
 			.prepare(`
 				SELECT 
 					t.id, t.description, t.amount, t.type, t.date, t.installments, t.installment_current,
-					t.installment_group_id, c.name as category_name, c.color as category_color
+					t.installment_group_id, c.name as category_name, c.icon as category_icon, c.color as category_color
+				FROM transactions t
+				LEFT JOIN categories c ON c.id = t.category_id
+				WHERE t.credit_card_id = ? AND t.workspace_id = ? AND t.type = 'expense'
+				ORDER BY t.date DESC
+			`)
+			.bind(cardId, workspaceId)
+			.all<any>();
+
+		const allTxs = rawTransactions || [];
+
+		const { results: dbInvoices } = await db
+			.prepare('SELECT id, reference_month, status, paid_at, total_amount FROM invoices WHERE credit_card_id = ?')
+			.bind(cardId)
+			.all<any>();
+
+		const dbInvoiceMap = new Map<string, any>();
+		for (const inv of dbInvoices || []) {
+			dbInvoiceMap.set(inv.reference_month, inv);
+		}
+
+		const history: any[] = [];
+		const currentYear = now.getFullYear();
+		const currentMonth = now.getMonth() + 1;
+
+		for (let i = 0; i < monthsCount; i++) {
+			const d = new Date(currentYear, currentMonth - 1 - i, 1);
+			const refMonth = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+			const period = calculateInvoicePeriod(closingDay, dueDay, refMonth, now);
+			const txs = allTxs.filter((tx) => (tx.date && tx.date.startsWith(refMonth)) || (tx.date >= period.start_date && tx.date <= period.closing_date));
+			const total = txs.reduce((acc, curr) => acc + Number(curr.amount || 0), 0);
+			const saved = dbInvoiceMap.get(refMonth);
+
+			history.push({
+				id: saved?.id || `inv_${cardId}_${refMonth}`,
+				reference_month: refMonth,
+				total_amount: Number(total.toFixed(2)),
+				status: saved?.status || (period.is_closed_by_date ? 'closed' : 'open'),
+				due_date: period.due_date,
+				closing_date: period.closing_date,
+				transactions_count: txs.length,
+			});
+		}
+
+		return c.json({
+			card_id: cardId,
+			workspace_id: workspaceId,
+			history,
+		});
+	} catch (err) {
+		console.error('Erro ao buscar histórico de faturas:', err);
+		return c.json({ error: 'Erro ao carregar histórico de faturas' }, 500);
+	}
+});
+
+// ------------------------------------------------------------------------------------------------
+// 3. GET /workspaces/:workspaceId/credit-cards/:cardId/invoice/forecast - Previsão futura (parcelas)
+// ------------------------------------------------------------------------------------------------
+invoicesRouter.get('/workspaces/:workspaceId/credit-cards/:cardId/invoice/forecast', async (c) => {
+	try {
+		const workspaceId = c.req.param('workspaceId');
+		const cardId = c.req.param('cardId');
+		const userId = String(c.get('userId'));
+		const db = c.env.financeiro_db || (c.env as any).DB;
+
+		const role = await getWorkspaceMemberRole(db, workspaceId, userId);
+		if (!role) {
+			return c.json({ error: 'Acesso negado. Você não é membro deste workspace' }, 403);
+		}
+
+		const monthsParam = parseInt(c.req.query('months') || '6', 10);
+		const monthsAhead = Math.min(Math.max(1, monthsParam), 24);
+
+		const card = await db
+			.prepare('SELECT id, name, brand, color, limit_amount, closing_day, due_day FROM credit_cards WHERE id = ? AND workspace_id = ?')
+			.bind(cardId, workspaceId)
+			.first<any>();
+
+		if (!card) {
+			return c.json({ error: 'Cartão de crédito não encontrado' }, 404);
+		}
+
+		const closingDay = Number(card.closing_day);
+		const dueDay = Number(card.due_day);
+		const now = new Date();
+
+		const { results: rawTransactions } = await db
+			.prepare(`
+				SELECT 
+					t.id, t.description, t.amount, t.type, t.date, t.installments, t.installment_current,
+					t.installment_group_id, c.name as category_name, c.icon as category_icon, c.color as category_color
 				FROM transactions t
 				LEFT JOIN categories c ON c.id = t.category_id
 				WHERE t.credit_card_id = ? AND t.workspace_id = ? AND t.type = 'expense'
@@ -258,110 +254,119 @@ invoicesRouter.get('/workspaces/:workspaceId/credit-cards/:cardId/invoice/foreca
 			.bind(cardId, workspaceId)
 			.all<any>();
 
-		const forecast = calculateInvoiceForecast(closingDay, dueDay, rawTransactions || [], monthsCount, undefined, now);
-
-		const totalCommittedFuture = forecast.reduce((acc, m) => acc + m.predicted_total, 0);
+		const forecast = calculateInvoiceForecast(closingDay, dueDay, rawTransactions || [], monthsAhead, undefined, now);
+		const totalCommitted = forecast.reduce((acc, curr) => acc + curr.predicted_total, 0);
 
 		return c.json({
 			card_id: cardId,
+			workspace_id: workspaceId,
 			card_name: card.name,
 			limit_amount: card.limit_amount,
-			total_committed_future: Number(totalCommittedFuture.toFixed(2)),
-			months_ahead: monthsCount,
+			total_committed_future: Number(totalCommitted.toFixed(2)),
+			months_count: monthsAhead,
 			forecast,
 		});
-	} catch (err: any) {
+	} catch (err) {
 		console.error('Erro ao calcular previsão de faturas:', err);
-		return c.json({ error: 'Erro ao calcular previsão de faturas' }, 500);
+		return c.json({ error: 'Erro ao gerar previsão de faturas' }, 500);
 	}
 });
 
 // ------------------------------------------------------------------------------------------------
-// 4. GET /cards/:id/invoices, GET /cards/:cardId/invoices & /workspaces/:workspaceId/cards/:cardId/invoices
+// 4. GET /cards/:id/invoices & /workspaces/:workspaceId/cards/:cardId/invoices - Lista Faturas por Mês
 // ------------------------------------------------------------------------------------------------
 const getCardInvoicesHandler = async (c: any) => {
 	try {
 		const cardId = c.req.param('id') || c.req.param('cardId');
-		const workspaceIdParam = c.req.param('workspaceId');
+		const pathWorkspaceId = c.req.param('workspaceId');
 		const userId = String(c.get('userId'));
 		const db = c.env.financeiro_db || (c.env as any).DB;
 
-		// 1. Busca cartão e valida permissão de workspace
-		let card: any = null;
-		if (workspaceIdParam) {
-			const role = await getWorkspaceMemberRole(db, workspaceIdParam, userId);
+		// 1. Se veio workspaceId no path, valida permissão primeiro
+		if (pathWorkspaceId) {
+			const role = await getWorkspaceMemberRole(db, pathWorkspaceId, userId);
 			if (!role) {
 				return c.json({ error: 'Acesso negado. Você não é membro deste workspace' }, 403);
 			}
-			card = await db
-				.prepare('SELECT id, workspace_id, name, brand, color, limit_amount, closing_day, due_day FROM credit_cards WHERE id = ? AND workspace_id = ?')
-				.bind(cardId, workspaceIdParam)
-				.first<any>();
-		} else {
-			card = await db
-				.prepare(`
-					SELECT c.id, c.workspace_id, c.name, c.brand, c.color, c.limit_amount, c.closing_day, c.due_day
-					FROM credit_cards c
-					INNER JOIN workspace_members wm ON wm.workspace_id = c.workspace_id
-					WHERE c.id = ? AND wm.user_id = ?
-				`)
-				.bind(cardId, userId)
-				.first<any>();
 		}
 
+		// 2. Busca cartão
+		const card = await db
+			.prepare('SELECT id, workspace_id, name, brand, color, limit_amount, closing_day, due_day FROM credit_cards WHERE id = ?')
+			.bind(cardId)
+			.first<any>();
+
 		if (!card) {
-			// Se o cartão não for encontrado para o usuário, retorna array vazio com 200 OK
+			// Se acessado via /cards/:id/invoices e cartão não existe, retorna array vazio
 			return c.json([]);
 		}
 
 		const workspaceId = card.workspace_id;
-		const closingDay = Number(card.closing_day || 25);
-		const dueDay = Number(card.due_day || 5);
+		const role = await getWorkspaceMemberRole(db, workspaceId, userId);
+		if (!role) {
+			return c.json({ error: 'Acesso negado. Você não é membro deste workspace' }, 403);
+		}
+
+		const closingDay = Number(card.closing_day);
+		const dueDay = Number(card.due_day);
 		const now = new Date();
 
-		const { results: cardTransactions } = await db
+		// 3. Busca faturas registradas no banco (status pago, etc.)
+		const { results: dbInvoices } = await db
+			.prepare('SELECT id, reference_month, status, paid_at, total_amount FROM invoices WHERE credit_card_id = ?')
+			.bind(cardId)
+			.all<any>();
+
+		const dbInvoiceMap = new Map<string, any>();
+		for (const inv of dbInvoices || []) {
+			dbInvoiceMap.set(inv.reference_month, inv);
+		}
+
+		// 4. Busca todas as transações desse cartão no workspace
+		const { results: rawCardTransactions } = await db
 			.prepare(`
 				SELECT 
 					t.id, t.description, t.amount, t.type, t.date, t.installments, t.installment_current,
 					t.installment_group_id, c.name as category_name, c.icon as category_icon, c.color as category_color
 				FROM transactions t
 				LEFT JOIN categories c ON c.id = t.category_id
-				WHERE t.credit_card_id = ? AND t.workspace_id = ?
-				ORDER BY t.date DESC
+				WHERE t.credit_card_id = ? AND t.workspace_id = ? AND t.type = 'expense'
+				ORDER BY t.date DESC, t.id DESC
 			`)
 			.bind(cardId, workspaceId)
 			.all<any>();
 
-		const { results: dbInvoices } = await db
-			.prepare('SELECT id, reference_month, status, paid_at FROM invoices WHERE credit_card_id = ?')
-			.bind(cardId)
-			.all<any>();
+		const cardTransactions = rawCardTransactions || [];
 
-		const dbInvoiceMap = new Map<string, { id: string; status: string; paid_at: string | null }>();
-		(dbInvoices || []).forEach((inv) => {
-			dbInvoiceMap.set(inv.reference_month, { id: inv.id, status: inv.status, paid_at: inv.paid_at });
-		});
-
+		// Coleta todos os meses com transações ou faturas existentes
 		const monthsSet = new Set<string>();
-		const currentYear = now.getFullYear();
-		const currentMonth = now.getMonth() + 1;
-
-		for (let offset = -4; offset <= 6; offset++) {
-			const d = new Date(currentYear, currentMonth - 1 + offset, 1);
-			const ref = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-			monthsSet.add(ref);
+		for (const tx of cardTransactions) {
+			if (tx.date && typeof tx.date === 'string') {
+				monthsSet.add(tx.date.slice(0, 7));
+			}
+		}
+		for (const inv of dbInvoices || []) {
+			if (inv.reference_month) {
+				monthsSet.add(inv.reference_month);
+			}
 		}
 
-		(cardTransactions || []).forEach((tx) => {
-			const ref = getInvoiceMonthForTransaction(tx.date, closingDay);
-			monthsSet.add(ref);
-		});
+		// Garante a janela padrão de 6 meses atrás até 6 meses à frente
+		const currentYear = now.getFullYear();
+		const currentMonth = now.getMonth() + 1;
+		for (let i = -6; i <= 6; i++) {
+			const d = new Date(currentYear, currentMonth - 1 + i, 1);
+			const yyyy = d.getFullYear();
+			const mm = String(d.getMonth() + 1).padStart(2, '0');
+			monthsSet.add(`${yyyy}-${mm}`);
+		}
 
-		const sortedMonths = Array.from(monthsSet).sort((a, b) => b.localeCompare(a));
+		const targetMonths = Array.from(monthsSet).sort().reverse();
 
-		const invoices = sortedMonths.map((refMonth) => {
+		// 5. Monta lista das faturas calculadas dinamicamente
+		const invoices = targetMonths.map((refMonth) => {
 			const period = calculateInvoicePeriod(closingDay, dueDay, refMonth, now);
-			const txs = (cardTransactions || []).filter((tx) => tx.date >= period.start_date && tx.date <= period.closing_date);
+			const txs = cardTransactions.filter((tx) => (tx.date && tx.date.startsWith(refMonth)) || (tx.date >= period.start_date && tx.date <= period.closing_date));
 			const totalAmount = txs.reduce((acc, curr) => acc + Number(curr.amount || 0), 0);
 			const saved = dbInvoiceMap.get(refMonth);
 			let status = saved?.status || (period.is_closed_by_date ? 'closed' : 'open');
@@ -400,7 +405,7 @@ invoicesRouter.get('/workspaces/:workspaceId/cards/:cardId/invoices', getCardInv
 invoicesRouter.get('/workspaces/:workspaceId/credit-cards/:cardId/invoices', getCardInvoicesHandler);
 
 // ------------------------------------------------------------------------------------------------
-// 5. GET /invoices/:id & /workspaces/:workspaceId/invoices/:id - Detalhes da fatura com transações
+// 5. GET /invoices/:id - Detalhes da fatura com transações
 // ------------------------------------------------------------------------------------------------
 const getInvoiceDetailHandler = async (c: any) => {
 	try {
@@ -457,20 +462,21 @@ const getInvoiceDetailHandler = async (c: any) => {
 		const now = new Date();
 		const period = calculateInvoicePeriod(closingDay, dueDay, referenceMonth, now);
 
-		const { results: transactions } = await db
+		const { results: rawTxs } = await db
 			.prepare(`
 				SELECT 
 					t.id, t.description, t.amount, t.type, t.date, t.installments, t.installment_current,
 					t.installment_group_id, c.name as category_name, c.icon as category_icon, c.color as category_color
 				FROM transactions t
 				LEFT JOIN categories c ON c.id = t.category_id
-				WHERE t.credit_card_id = ? AND t.workspace_id = ? AND t.date >= ? AND t.date <= ?
+				WHERE t.credit_card_id = ? AND t.workspace_id = ? AND t.type = 'expense'
 				ORDER BY t.date DESC, t.id DESC
 			`)
-			.bind(cardId, workspaceId, period.start_date, period.closing_date)
+			.bind(cardId, workspaceId)
 			.all<any>();
 
-		const totalAmount = (transactions || []).reduce((acc, curr) => acc + Number(curr.amount || 0), 0);
+		const transactions = (rawTxs || []).filter((tx) => (tx.date && tx.date.startsWith(referenceMonth)) || (tx.date >= period.start_date && tx.date <= period.closing_date));
+		const totalAmount = transactions.reduce((acc, curr) => acc + Number(curr.amount || 0), 0);
 		let status = savedStatus || (period.is_closed_by_date ? 'closed' : 'open');
 
 		return c.json({
@@ -557,12 +563,13 @@ invoicesRouter.post('/invoices/:id/pay', async (c) => {
 		const now = new Date();
 		const period = calculateInvoicePeriod(closingDay, dueDay, referenceMonth, now);
 
-		const { results: txs } = await db
-			.prepare('SELECT amount FROM transactions WHERE credit_card_id = ? AND workspace_id = ? AND date >= ? AND date <= ?')
-			.bind(cardId, workspaceId, period.start_date, period.closing_date)
+		const { results: rawTxs } = await db
+			.prepare('SELECT amount, date FROM transactions WHERE credit_card_id = ? AND workspace_id = ? AND type = "expense"')
+			.bind(cardId, workspaceId)
 			.all<any>();
 
-		const totalAmount = (txs || []).reduce((acc, curr) => acc + Number(curr.amount || 0), 0);
+		const txs = (rawTxs || []).filter((tx) => (tx.date && tx.date.startsWith(referenceMonth)) || (tx.date >= period.start_date && tx.date <= period.closing_date));
+		const totalAmount = txs.reduce((acc, curr) => acc + Number(curr.amount || 0), 0);
 		const nowISO = new Date().toISOString();
 
 		const existing = await db
