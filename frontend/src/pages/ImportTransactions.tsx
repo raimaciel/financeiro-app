@@ -8,13 +8,13 @@ import type {
   CreditCard,
   ImportedTransaction,
   ParseImportResponse,
-  ConfirmImportPayload,
 } from "@/types";
 import {
   extractTextFromPdf,
   parseTransactionsFromText,
   detectReferenceYear,
 } from "@/utils/pdfParser";
+import { extractTransactions as extractCaixaTransactions } from "@/utils/caixaInvoiceParser";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -57,12 +57,16 @@ import {
   AlertCircle,
   FileText,
   Loader2,
+  Calendar,
   CreditCard as CardIcon,
   Users,
+  Check,
+  RotateCcw,
 } from "lucide-react";
 
 const BANK_OPTIONS = [
   { id: "auto", name: "Auto-detectar (Padrão)" },
+  { id: "caixa", name: "Caixa Econômica Federal (Fatura PDF com Revisão Manual)" },
   { id: "nubank", name: "Nubank" },
   { id: "inter", name: "Banco Inter" },
   { id: "itau", name: "Itaú" },
@@ -79,7 +83,7 @@ export default function ImportTransactions() {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Estados principais
-  const [selectedWorkspaceId, setSelectedWorkspaceId] = useState<string>("");
+  const [selectedWorkspaceId, setSelectedWorkspaceId] = useState<string>("ws-1");
   const [selectedCreditCardId, setSelectedCreditCardId] = useState<string>("none");
   const [selectedBank, setSelectedBank] = useState<string>("auto");
 
@@ -94,6 +98,10 @@ export default function ImportTransactions() {
   const [activeTabFilter, setActiveTabFilter] = useState<"all" | "selected" | "duplicates" | "income" | "expense">("all");
   const [searchQuery, setSearchQuery] = useState("");
   const [groupByCardView, setGroupByCardView] = useState(true);
+
+  // Modo de revisão manual (ex: Caixa)
+  const [isManualReviewMode, setIsManualReviewMode] = useState(false);
+  const [globalYear, setGlobalYear] = useState<number>(() => new Date().getFullYear());
 
   // Modais de confirmação e status
   const [isConfirmModalOpen, setIsConfirmModalOpen] = useState(false);
@@ -155,7 +163,6 @@ export default function ImportTransactions() {
       if (desc.includes(catName)) return { id: cat.id, name: cat.name };
     }
 
-    // Regras heurísticas comuns
     if (type === "expense") {
       const alimentacao = typeCats.find((c) => /alimenta|mercado|restaurante|refei/i.test(c.name));
       if (alimentacao && /mercado|supermercado|pao de acucar|carrefour|ifood|restaurante|padaria|lanche|burger/i.test(desc)) {
@@ -181,7 +188,7 @@ export default function ImportTransactions() {
     return null;
   };
 
-  // Processamento de Arquivo PDF no Frontend
+  // Processamento de Arquivo PDF no Frontend com suporte a Caixa / Revisão Manual
   const processPdfFile = async (file: File) => {
     setIsParsingPdf(true);
     setErrorMessage(null);
@@ -191,59 +198,105 @@ export default function ImportTransactions() {
         throw new Error("Não foi possível extrair texto do PDF. O arquivo pode ser uma imagem digitalizada.");
       }
 
-      const refYear = detectReferenceYear(text);
-      const parsed = parseTransactionsFromText(text, refYear);
+      const isCaixaSelected = selectedBank === "caixa";
+      const isCaixaDetected = /caixa\s+econ[oô]mica/i.test(text) || (/\(cart[aã]o\s+\d+\)/i.test(text) && !detectReferenceYear(text));
 
-      if (parsed.length === 0) {
-        throw new Error(
-          "Nenhuma transação foi identificada no PDF. Verifique se o formato é uma fatura de cartão com datas e valores legíveis."
-        );
+      if (isCaixaSelected || isCaixaDetected) {
+        let caixaItems = [];
+        try {
+          const previewRes = await api.post("/api/import/preview", {
+            pdfText: text,
+            workspaceId: selectedWorkspaceId,
+          });
+          caixaItems = previewRes.data.transactions || [];
+        } catch {
+          caixaItems = extractCaixaTransactions(text);
+        }
+
+        if (caixaItems.length === 0) {
+          throw new Error("Nenhuma transação identificada no formato de fatura Caixa. Verifique o arquivo.");
+        }
+
+        const currentYear = new Date().getFullYear();
+        setGlobalYear(currentYear);
+
+        const mappedTransactions: ImportedTransaction[] = caixaItems.map((it: any, index: number) => {
+          const type: "income" | "expense" = it.tipo === "C" ? "income" : "expense";
+          const cat = suggestCategory(it.descricao || it.description, type);
+
+          return {
+            id: it.id || `caixa-${index}-${Date.now()}`,
+            tempId: `caixa-${index}`,
+            date: `${currentYear}-${it.dataParcial.split("/")[1]}-${it.dataParcial.split("/")[0]}`,
+            dataParcial: it.dataParcial,
+            ano: currentYear,
+            precisaRevisao: true,
+            description: it.descricao || it.description,
+            cleanDescription: it.descricao || it.description,
+            amount: it.valor || it.amount,
+            type,
+            tipo: it.tipo || (type === "income" ? "C" : "D"),
+            cartao: it.cartao || "Cartão Caixa",
+            cardLabel: it.cartao || "Cartão Caixa",
+            categoryId: cat?.id || it.categoryId || null,
+            categoryName: cat?.name || it.categoryName || null,
+            creditCardId: selectedCreditCardId !== "none" ? selectedCreditCardId : null,
+            selected: true,
+          };
+        });
+
+        setIsManualReviewMode(true);
+        setTransactions(mappedTransactions);
+        setPreviewData({
+          filename: file.name,
+          fileType: "pdf",
+          totalCount: mappedTransactions.length,
+          duplicatesCount: 0,
+          newCount: mappedTransactions.length,
+          summary: {
+            bankName: "Caixa Econômica Federal",
+            fileType: "Fatura PDF (Revisão Manual)",
+          },
+          transactions: mappedTransactions,
+        });
+
+        setIsParsingPdf(false);
+        return;
       }
 
-      // Mapeia para o formato padrão ImportedTransaction
-      const mappedTransactions: ImportedTransaction[] = parsed.map((p, idx) => {
-        const txType: "income" | "expense" = p.amount < 0 ? "expense" : "income";
-        const positiveAmount = Math.abs(p.amount);
-        const suggested = suggestCategory(p.description, txType);
+      // Outros PDFs com detecção de ano
+      const refYear = detectReferenceYear(text);
+      const parsedItems = parseTransactionsFromText(text, refYear);
 
-        // Tenta associar automaticamente com um cartão existente que tenha o mesmo final
-        let matchedCardId: string | null = null;
-        if (p.cardLast4) {
-          const found = creditCards.find(
-            (c) => c.name.includes(p.cardLast4!) || (c as any).last_four_digits === p.cardLast4
-          );
-          if (found) matchedCardId = found.id;
-        }
+      if (parsedItems.length === 0) {
+        throw new Error("Nenhum lançamento financeiro identificado no PDF. Verifique se é uma fatura ou extrato compatível.");
+      }
 
-        if (!matchedCardId && selectedCreditCardId !== "none") {
-          matchedCardId = selectedCreditCardId;
-        }
+      const mappedTransactions: ImportedTransaction[] = parsedItems.map((it, index) => {
+        const type: "income" | "expense" = it.amount > 0 ? "income" : "expense";
+        const cat = suggestCategory(it.description, type);
 
         return {
-          id: `pdf_tx_${idx}_${Date.now()}`,
-          tempId: `pdf_tx_${idx}_${Date.now()}`,
-          date: p.date,
-          description: p.description,
-          amount: positiveAmount,
-          rawAmount: p.amount,
-          type: txType,
-          categoryId: suggested?.id || null,
-          categoryName: suggested?.name || null,
-          autoCategorized: !!suggested,
-          creditCardId: matchedCardId,
-          cardLast4: p.cardLast4,
-          cardLabel: p.cardLabel,
-          installments: p.installments || 1,
-          installmentCurrent: p.installmentCurrent || 1,
-          isPossibleDuplicate: false,
+          id: `pdf-${index}-${Date.now()}`,
+          tempId: `pdf-${index}`,
+          date: it.date,
+          description: it.description,
+          cleanDescription: it.description,
+          amount: Math.abs(it.amount),
+          type,
+          categoryId: cat?.id || null,
+          categoryName: cat?.name || null,
+          creditCardId: selectedCreditCardId !== "none" ? selectedCreditCardId : null,
+          cardLast4: it.cardLast4,
+          cardLabel: it.cardLabel,
+          installments: it.installments || 1,
+          installmentCurrent: it.installmentCurrent || 1,
           selected: true,
         };
       });
 
-      const dates = mappedTransactions.map((t) => t.date).sort();
-      const startDate = dates[0];
-      const endDate = dates[dates.length - 1];
-
+      setIsManualReviewMode(false);
+      setTransactions(mappedTransactions);
       setPreviewData({
         filename: file.name,
         fileType: "pdf",
@@ -252,84 +305,92 @@ export default function ImportTransactions() {
         newCount: mappedTransactions.length,
         summary: {
           bankName: "Fatura em PDF",
-          fileType: "pdf",
-          startDate,
-          endDate,
+          fileType: "PDF",
         },
         transactions: mappedTransactions,
       });
-
-      setTransactions(mappedTransactions);
-      setErrorMessage(null);
     } catch (err: any) {
-      setErrorMessage(err.message || "Erro ao processar arquivo PDF.");
+      console.error("Erro no processamento do PDF:", err);
+      setErrorMessage(err.message || "Falha ao processar o arquivo PDF.");
     } finally {
       setIsParsingPdf(false);
     }
   };
 
-  // Mutação: Processar Arquivo (OFX ou CSV no backend)
+  // Mutação para arquivos OFX ou CSV via Backend
   const parseMutation = useMutation({
-    mutationFn: async () => {
-      if (!selectedFile || !selectedWorkspaceId) {
-        throw new Error("Selecione um arquivo e um workspace");
-      }
-
-      // Se for PDF, processa no cliente com pdfjs
-      const ext = selectedFile.name.split(".").pop()?.toLowerCase();
-      if (ext === "pdf") {
-        await processPdfFile(selectedFile);
-        return;
-      }
-
+    mutationFn: async ({ file, bank, creditCardId }: { file: File; bank: string; creditCardId: string }) => {
       const formData = new FormData();
-      formData.append("file", selectedFile);
-      formData.append("bankPreset", selectedBank);
-      if (selectedCreditCardId && selectedCreditCardId !== "none") {
-        formData.append("creditCardId", selectedCreditCardId);
+      formData.append("file", file);
+      formData.append("bank", bank);
+      if (creditCardId !== "none") {
+        formData.append("creditCardId", creditCardId);
       }
 
-      const res = await api.post<ParseImportResponse>(
-        `/workspaces/${selectedWorkspaceId}/import/parse`,
-        formData,
-        { headers: { "Content-Type": "multipart/form-data" } }
-      );
-      return res.data;
+      const res = await api.post(`/workspaces/${selectedWorkspaceId}/import/parse`, formData, {
+        headers: { "Content-Type": "multipart/form-data" },
+      });
+      return res.data as ParseImportResponse;
     },
     onSuccess: (data) => {
-      if (data) {
-        setPreviewData(data);
-        setTransactions(data.transactions);
-        setErrorMessage(null);
-      }
+      setIsManualReviewMode(false);
+      setPreviewData(data);
+      setTransactions(data.transactions || []);
+      setErrorMessage(null);
     },
     onError: (err: any) => {
-      const msg = err.response?.data?.error || err.message || "Erro ao processar o arquivo.";
-      setErrorMessage(msg);
+      setErrorMessage(err.response?.data?.error || "Erro ao processar o arquivo. Tente outro formato.");
     },
   });
 
-  // Mutação: Confirmar Importação
+  // Mutação de Confirmação e Gravação em Lote no Banco
   const confirmMutation = useMutation({
     mutationFn: async () => {
-      if (!selectedWorkspaceId) throw new Error("Workspace não selecionado");
-
-      const selectedItems = transactions.filter((t) => t.selected);
-      if (selectedItems.length === 0) {
-        throw new Error("Nenhuma transação selecionada para importação");
+      const selected = transactions.filter((t) => t.selected);
+      if (selected.length === 0) {
+        throw new Error("Selecione ao menos uma transação para importar.");
       }
 
-      const payload: ConfirmImportPayload = {
-        transactions: selectedItems.map((t) => ({
+      if (isManualReviewMode) {
+        const payload = selected.map((t) => {
+          const year = t.ano || globalYear;
+          const [dd, mm] = (t.dataParcial || t.date.slice(5)).split("/");
+          const isoDate = t.dataParcial ? `${year}-${mm}-${dd}` : t.date;
+
+          return {
+            date: isoDate,
+            dataParcial: t.dataParcial,
+            ano: year,
+            descricao: t.description,
+            description: t.description,
+            valor: Number(t.amount),
+            amount: Number(t.amount),
+            tipo: t.type === "income" ? "C" : "D",
+            type: t.type,
+            cartao: t.cartao || t.cardLabel,
+            categoryId: t.categoryId || null,
+            creditCardId: t.creditCardId || (selectedCreditCardId !== "none" ? selectedCreditCardId : null),
+          };
+        });
+
+        const res = await api.post("/api/import/confirm", {
+          workspaceId: selectedWorkspaceId,
+          transactions: payload,
+        });
+        return res.data;
+      }
+
+      const payload = {
+        creditCardId: selectedCreditCardId !== "none" ? selectedCreditCardId : null,
+        transactions: selected.map((t) => ({
           date: t.date,
           description: t.description,
           amount: t.amount,
           type: t.type,
-          categoryId: t.categoryId,
+          categoryId: t.categoryId || null,
           creditCardId: t.creditCardId || (selectedCreditCardId !== "none" ? selectedCreditCardId : null),
           installments: t.installments || 1,
           installmentCurrent: t.installmentCurrent || 1,
-          externalId: t.externalId,
         })),
       };
 
@@ -337,180 +398,158 @@ export default function ImportTransactions() {
       return res.data;
     },
     onSuccess: (data) => {
-      queryClient.invalidateQueries({ queryKey: ["transactions"] });
+      queryClient.invalidateQueries({ queryKey: ["transactions", selectedWorkspaceId] });
       queryClient.invalidateQueries({ queryKey: ["dashboard"] });
       queryClient.invalidateQueries({ queryKey: ["invoices"] });
-      queryClient.invalidateQueries({ queryKey: ["credit-cards"] });
-      queryClient.invalidateQueries({ queryKey: ["notifications"] });
 
       setIsConfirmModalOpen(false);
-      setSuccessMessage(data.message || "Transações importadas com sucesso!");
-      setPreviewData(null);
-      setTransactions([]);
-      setSelectedFile(null);
+      setSuccessMessage(data.message || `${data.count} transação(ões) importada(s) com sucesso!`);
+
+      setTimeout(() => {
+        setPreviewData(null);
+        setSelectedFile(null);
+        setTransactions([]);
+        setIsManualReviewMode(false);
+      }, 2000);
     },
     onError: (err: any) => {
-      const msg = err.response?.data?.error || err.message || "Erro ao salvar transações.";
-      setErrorMessage(msg);
-      setIsConfirmModalOpen(false);
+      setErrorMessage(err.response?.data?.error || err.message || "Erro ao salvar transações no banco.");
     },
   });
 
-  // Manipulação de Seleção de Arquivo
   const handleFileSelect = (file: File) => {
     const ext = file.name.split(".").pop()?.toLowerCase();
-    if (ext !== "ofx" && ext !== "csv" && ext !== "pdf") {
-      setErrorMessage("Formato inválido! Por favor selecione um arquivo .ofx, .csv ou .pdf.");
+    if (!["ofx", "csv", "pdf"].includes(ext || "")) {
+      setErrorMessage("Formato de arquivo não suportado. Envie um arquivo .OFX, .CSV ou .PDF");
       return;
     }
+
     setSelectedFile(file);
+    setPreviewData(null);
+    setTransactions([]);
     setErrorMessage(null);
+    setSuccessMessage(null);
   };
 
-  const handleDrop = (e: React.DragEvent) => {
-    e.preventDefault();
-    setIsDragOver(false);
-    if (e.dataTransfer.files && e.dataTransfer.files[0]) {
-      handleFileSelect(e.dataTransfer.files[0]);
+  const handleStartParsing = () => {
+    if (!selectedFile) return;
+    const ext = selectedFile.name.split(".").pop()?.toLowerCase();
+
+    if (ext === "pdf" || selectedBank === "caixa") {
+      processPdfFile(selectedFile);
+    } else {
+      parseMutation.mutate({
+        file: selectedFile,
+        bank: selectedBank,
+        creditCardId: selectedCreditCardId,
+      });
     }
   };
 
-  // Funções de manipulação das transações no preview
   const handleToggleSelectAll = (select: boolean) => {
     setTransactions((prev) => prev.map((t) => ({ ...t, selected: select })));
   };
 
-  const handleToggleSelect = (tempId: string) => {
+  const handleToggleSelect = (index: number) => {
+    setTransactions((prev) => {
+      const copy = [...prev];
+      copy[index].selected = !copy[index].selected;
+      return copy;
+    });
+  };
+
+  const handleUpdateCategory = (index: number, categoryId: string) => {
+    const catIdNum = categoryId === "none" ? null : Number(categoryId);
+    const catObj = categories.find((c) => c.id === catIdNum);
+
+    setTransactions((prev) => {
+      const copy = [...prev];
+      copy[index].categoryId = catIdNum;
+      copy[index].categoryName = catObj?.name || null;
+      return copy;
+    });
+  };
+
+  const handleUpdateTransactionField = (index: number, field: string, value: any) => {
+    setTransactions((prev) => {
+      const copy = [...prev];
+      copy[index] = { ...copy[index], [field]: value };
+      return copy;
+    });
+  };
+
+  const handleApplyYearToAll = () => {
+    if (!globalYear || isNaN(globalYear) || globalYear < 1970 || globalYear > 2100) return;
     setTransactions((prev) =>
-      prev.map((t) => ((t.tempId || t.id) === tempId ? { ...t, selected: !t.selected } : t))
+      prev.map((t) => ({
+        ...t,
+        ano: globalYear,
+        date: t.dataParcial ? `${globalYear}-${t.dataParcial.split("/")[1]}-${t.dataParcial.split("/")[0]}` : t.date,
+      }))
     );
   };
 
-  const handleCategoryChange = (tempId: string, categoryId: number | null) => {
-    setTransactions((prev) =>
-      prev.map((t) => ((t.tempId || t.id) === tempId ? { ...t, categoryId } : t))
-    );
-  };
-
-  const handleInstallmentChange = (tempId: string, installments: number) => {
-    setTransactions((prev) =>
-      prev.map((t) => ((t.tempId || t.id) === tempId ? { ...t, installments } : t))
-    );
-  };
-
-  const handleCardChange = (tempId: string, creditCardId: string | null) => {
-    setTransactions((prev) =>
-      prev.map((t) => ((t.tempId || t.id) === tempId ? { ...t, creditCardId } : t))
-    );
-  };
-
-  const handleReset = () => {
-    setPreviewData(null);
-    setTransactions([]);
-    setSelectedFile(null);
-    setSuccessMessage(null);
-    setErrorMessage(null);
-    if (fileInputRef.current) fileInputRef.current.value = "";
-  };
-
-  // Contadores do Preview
-  const stats = useMemo(() => {
-    const total = transactions.length;
-    const selected = transactions.filter((t) => t.selected).length;
-    const duplicates = transactions.filter((t) => t.isPossibleDuplicate).length;
-    const autoCategorized = transactions.filter((t) => t.autoCategorized).length;
-    const totalSelectedAmount = transactions
-      .filter((t) => t.selected)
-      .reduce((acc, t) => acc + (t.type === "income" ? t.amount : -t.amount), 0);
-
-    return { total, selected, duplicates, autoCategorized, totalSelectedAmount };
-  }, [transactions]);
-
-  // Transações filtradas para a tabela
   const filteredTransactions = useMemo(() => {
-    return transactions.filter((item) => {
-      if (activeTabFilter === "selected" && !item.selected) return false;
-      if (activeTabFilter === "duplicates" && !item.isPossibleDuplicate) return false;
-      if (activeTabFilter === "income" && item.type !== "income") return false;
-      if (activeTabFilter === "expense" && item.type !== "expense") return false;
+    return transactions.filter((t) => {
+      if (activeTabFilter === "selected" && !t.selected) return false;
+      if (activeTabFilter === "duplicates" && !t.isPossibleDuplicate) return false;
+      if (activeTabFilter === "income" && t.type !== "income") return false;
+      if (activeTabFilter === "expense" && t.type !== "expense") return false;
 
       if (searchQuery.trim()) {
         const q = searchQuery.toLowerCase();
-        const descMatch = item.description.toLowerCase().includes(q);
-        const catMatch = item.categoryName?.toLowerCase().includes(q);
-        const valMatch = String(item.amount).includes(q);
-        const cardMatch = item.cardLast4?.includes(q) || item.cardLabel?.toLowerCase().includes(q);
-        return descMatch || catMatch || valMatch || !!cardMatch;
+        const matchDesc = t.description.toLowerCase().includes(q);
+        const matchCat = (t.categoryName || "").toLowerCase().includes(q);
+        const matchCard = (t.cardLabel || t.cartao || "").toLowerCase().includes(q);
+        const matchDate = t.dataParcial ? t.dataParcial.includes(q) : t.date.includes(q);
+        if (!matchDesc && !matchCat && !matchCard && !matchDate) return false;
       }
 
       return true;
     });
   }, [transactions, activeTabFilter, searchQuery]);
 
-  // Agrupamento por Cartão
-  const groupedTransactions = useMemo(() => {
-    const groups: Record<
-      string,
-      {
-        label: string;
-        last4?: string;
-        items: ImportedTransaction[];
-        totalExpense: number;
-        totalIncome: number;
-      }
-    > = {};
-
+  // Agrupamento por cartão para fatura em PDF
+  const cardGroups = useMemo(() => {
+    const groups: Record<string, ImportedTransaction[]> = {};
     for (const tx of filteredTransactions) {
-      const key = tx.cardLast4 ? `card_${tx.cardLast4}` : "general";
-      if (!groups[key]) {
-        groups[key] = {
-          label: tx.cardLabel || (tx.cardLast4 ? `Cartão Final ${tx.cardLast4}` : "Lançamentos Gerais"),
-          last4: tx.cardLast4,
-          items: [],
-          totalExpense: 0,
-          totalIncome: 0,
-        };
-      }
-      groups[key].items.push(tx);
-      if (tx.type === "expense") {
-        groups[key].totalExpense += tx.amount;
-      } else {
-        groups[key].totalIncome += tx.amount;
-      }
+      const label = tx.cardLabel || tx.cartao || (tx.cardLast4 ? `Cartão final •••• ${tx.cardLast4}` : "Transações Gerais");
+      if (!groups[label]) groups[label] = [];
+      groups[label].push(tx);
     }
-
-    return Object.entries(groups).map(([key, group]) => ({ key, ...group }));
+    return groups;
   }, [filteredTransactions]);
 
-  const hasMultipleCards = useMemo(() => {
-    return transactions.some((t) => !!t.cardLast4);
-  }, [transactions]);
+  const hasMultipleCards = Object.keys(cardGroups).length > 1;
+
+  const selectedCount = transactions.filter((t) => t.selected).length;
+  const isAllSelected = filteredTransactions.length > 0 && filteredTransactions.every((t) => t.selected);
 
   return (
-    <div className="space-y-6">
-      {/* Cabeçalho */}
+    <div className="space-y-6 max-w-7xl mx-auto pb-12">
+      {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <h1 className="text-3xl font-extrabold tracking-tight text-slate-900 flex items-center gap-2">
             <FileSpreadsheet className="h-8 w-8 text-primary" />
             Importar Extrato Bancário
           </h1>
-          <p className="text-slate-500 text-sm mt-1">
-            Faça upload de extratos nos formatos OFX, CSV ou fatura em PDF. Transações com múltiplos cartões são associadas automaticamente.
+          <p className="text-sm text-muted-foreground mt-1">
+            Importe extratos OFX/CSV ou faturas em PDF (Caixa, Nubank, Inter, etc.) com revisão manual antes de salvar.
           </p>
         </div>
 
         {/* Seletor de Workspace */}
         {workspaces.length > 1 && (
           <div className="flex items-center gap-2">
-            <Label className="text-sm font-semibold whitespace-nowrap">Workspace:</Label>
+            <Label className="text-xs font-semibold text-slate-500 whitespace-nowrap">Workspace:</Label>
             <Select value={selectedWorkspaceId} onValueChange={setSelectedWorkspaceId}>
-              <SelectTrigger className="w-[200px] bg-white">
-                <SelectValue placeholder="Selecione..." />
+              <SelectTrigger className="w-[200px] bg-white text-xs font-medium">
+                <SelectValue placeholder="Selecione o Workspace" />
               </SelectTrigger>
               <SelectContent>
                 {workspaces.map((ws) => (
-                  <SelectItem key={ws.id} value={ws.id}>
+                  <SelectItem key={ws.id} value={ws.id} className="text-xs">
                     {ws.name} ({ws.role})
                   </SelectItem>
                 ))}
@@ -520,698 +559,481 @@ export default function ImportTransactions() {
         )}
       </div>
 
-      {/* Alerta quando nenhum workspace estiver selecionado */}
-      {!selectedWorkspaceId && workspaces.length === 0 && (
-        <Card className="border-amber-200 bg-amber-50 p-6 text-center space-y-3">
-          <AlertCircle className="h-8 w-8 text-amber-600 mx-auto" />
-          <h3 className="text-base font-bold text-amber-900">Nenhum Workspace Encontrado</h3>
-          <p className="text-sm text-amber-700 max-w-md mx-auto">
-            Para importar e conciliar extratos bancários, você precisa ter ao menos um workspace criado.
-          </p>
-          <Button onClick={() => navigate("/workspaces")} className="gap-2 font-semibold">
-            <FolderKanban className="h-4 w-4" /> Criar Workspace
-          </Button>
-        </Card>
+      {/* Alertas */}
+      {successMessage && (
+        <div className="p-4 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800 flex items-center gap-3 shadow-xs animate-in fade-in-50">
+          <CheckCircle2 className="h-5 w-5 text-emerald-600 shrink-0" />
+          <span className="font-semibold text-sm">{successMessage}</span>
+        </div>
       )}
 
-      {/* Alerta de Erro */}
       {errorMessage && (
-        <div className="p-4 rounded-lg bg-red-50 border border-red-200 text-red-700 flex items-start gap-3 animate-in fade-in">
-          <AlertTriangle className="h-5 w-5 shrink-0 mt-0.5 text-red-500" />
-          <div className="flex-1 text-sm font-medium">{errorMessage}</div>
-          <button onClick={() => setErrorMessage(null)} className="text-red-400 hover:text-red-600">
+        <div className="p-4 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 flex items-center gap-3 shadow-xs animate-in fade-in-50">
+          <AlertCircle className="h-5 w-5 text-rose-600 shrink-0" />
+          <span className="font-semibold text-sm">{errorMessage}</span>
+          <button onClick={() => setErrorMessage(null)} className="ml-auto text-rose-500 hover:text-rose-700">
             <X className="h-4 w-4" />
           </button>
         </div>
       )}
 
-      {/* Mensagem de Sucesso */}
-      {successMessage && (
-        <Card className="border-emerald-200 bg-emerald-50/70 animate-in fade-in">
-          <CardContent className="p-6 text-center space-y-4">
-            <div className="mx-auto w-12 h-12 rounded-full bg-emerald-100 flex items-center justify-center text-emerald-600">
-              <CheckCircle2 className="h-6 w-6" />
-            </div>
-            <div>
-              <h3 className="text-lg font-bold text-emerald-900">Importação Concluída!</h3>
-              <p className="text-emerald-700 text-sm mt-1">{successMessage}</p>
-            </div>
-            <div className="flex items-center justify-center gap-3 pt-2">
-              <Button variant="outline" onClick={handleReset}>
-                Importar Outro Arquivo
-              </Button>
-              <Button onClick={() => navigate("/transactions")} className="gap-2">
-                Ver Transações <ArrowRight className="h-4 w-4" />
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
-      )}
-
-      {/* ETAPA 1: Formulário de Upload e Configuração */}
-      {!previewData && !successMessage && selectedWorkspaceId && (
+      {/* ETAPA 1: SELEÇÃO E CONFIGURAÇÃO DO ARQUIVO */}
+      {!previewData && (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* Card de Configurações */}
-          <Card className="lg:col-span-1 shadow-xs">
-            <CardHeader>
+          <Card className="lg:col-span-2 shadow-xs border-slate-200">
+            <CardHeader className="pb-3">
               <CardTitle className="text-base flex items-center gap-2">
-                <Building2 className="h-4 w-4 text-primary" />
-                Configurações da Importação
+                <Upload className="h-5 w-5 text-primary" /> Enviar Arquivo de Extrato ou Fatura
               </CardTitle>
-              <CardDescription>Defina onde os lançamentos serão registrados</CardDescription>
+              <CardDescription className="text-xs">
+                Arraste o arquivo ou clique para selecionar. Formatos suportados: <strong>.OFX</strong>, <strong>.CSV</strong> ou <strong>.PDF</strong>.
+              </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
-              {/* Conta / Cartão de Destino */}
-              <div className="space-y-2">
-                <Label htmlFor="dest-card">Conta / Cartão de Destino</Label>
-                <Select value={selectedCreditCardId} onValueChange={setSelectedCreditCardId}>
-                  <SelectTrigger id="dest-card" className="bg-white">
-                    <SelectValue placeholder="Selecione o destino" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="none">
-                      <div className="flex items-center gap-2">
-                        <span className="h-2 w-2 rounded-full bg-emerald-500" />
-                        <span>Conta Corrente / Dinheiro (Sem Cartão)</span>
-                      </div>
-                    </SelectItem>
-                    {creditCards.map((card) => (
-                      <SelectItem key={card.id} value={card.id}>
-                        <div className="flex items-center gap-2">
-                          <CreditCardIcon className="h-4 w-4 text-muted-foreground" />
-                          <span>{card.name}</span>
-                        </div>
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <p className="text-xs text-muted-foreground">
-                  Para PDFs com múltiplos cartões (titular e adicionais), a associação é feita automaticamente por cartão.
-                </p>
-              </div>
-
-              {/* Banco de Origem (Preset para CSV) */}
-              <div className="space-y-2">
-                <Label htmlFor="bank-preset">Banco de Origem (para CSV)</Label>
-                <Select value={selectedBank} onValueChange={setSelectedBank}>
-                  <SelectTrigger id="bank-preset" className="bg-white">
-                    <SelectValue placeholder="Selecione o banco" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {BANK_OPTIONS.map((bank) => (
-                      <SelectItem key={bank.id} value={bank.id}>
-                        {bank.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <p className="text-xs text-muted-foreground">
-                  Utilizado principalmente para arquivos CSV. Extratos OFX e Faturas em PDF são detectados automaticamente.
-                </p>
-              </div>
-            </CardContent>
-          </Card>
-
-          {/* Área de Drag and Drop */}
-          <Card className="lg:col-span-2 shadow-xs">
-            <CardHeader>
-              <CardTitle className="text-base flex items-center gap-2">
-                <Upload className="h-4 w-4 text-primary" />
-                Upload do Arquivo de Extrato / Fatura
-              </CardTitle>
-              <CardDescription>Formatos aceitos: PDF (Faturas), OFX (Internet Banking) ou CSV</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept=".ofx,.csv,.pdf"
-                className="hidden"
-                onChange={(e) => {
-                  if (e.target.files && e.target.files[0]) {
-                    handleFileSelect(e.target.files[0]);
-                  }
-                }}
-              />
-
               <div
-                onDragOver={(e) => {
-                  e.preventDefault();
-                  setIsDragOver(true);
-                }}
+                onDragOver={(e) => { e.preventDefault(); setIsDragOver(true); }}
                 onDragLeave={() => setIsDragOver(false)}
-                onDrop={handleDrop}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  setIsDragOver(false);
+                  if (e.dataTransfer.files?.[0]) handleFileSelect(e.dataTransfer.files[0]);
+                }}
                 onClick={() => fileInputRef.current?.click()}
-                className={`border-2 border-dashed rounded-xl p-10 text-center cursor-pointer transition-all ${
+                className={`border-2 border-dashed rounded-2xl p-8 text-center cursor-pointer transition-all flex flex-col items-center justify-center gap-3 ${
                   isDragOver
-                    ? "border-primary bg-primary/5 scale-[1.01]"
+                    ? "border-primary bg-primary/5 scale-[0.99]"
+                    : selectedFile
+                    ? "border-emerald-400 bg-emerald-50/40"
                     : "border-slate-300 hover:border-slate-400 bg-slate-50/50"
                 }`}
               >
-                <div className="mx-auto w-12 h-12 rounded-full bg-primary/10 flex items-center justify-center text-primary mb-3">
-                  {isParsingPdf ? (
-                    <Loader2 className="h-6 w-6 animate-spin" />
-                  ) : selectedFile?.name.endsWith(".pdf") ? (
-                    <FileText className="h-6 w-6 text-rose-500" />
-                  ) : (
-                    <Upload className="h-6 w-6" />
-                  )}
-                </div>
-                <h3 className="font-semibold text-slate-800">
-                  {isParsingPdf
-                    ? "Extraindo e analisando transações do PDF..."
-                    : selectedFile
-                    ? selectedFile.name
-                    : "Clique para selecionar ou arraste o arquivo aqui"}
-                </h3>
-                <p className="text-xs text-muted-foreground mt-1">
-                  {selectedFile
-                    ? `Tamanho: ${(selectedFile.size / 1024).toFixed(1)} KB • Clique para trocar`
-                    : "Faturas em .PDF, Extratos bancários .OFX ou planilhas .CSV"}
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept=".ofx,.csv,.pdf,application/pdf,text/csv"
+                  className="hidden"
+                  onChange={(e) => e.target.files?.[0] && handleFileSelect(e.target.files[0])}
+                />
+
+                {selectedFile ? (
+                  <>
+                    <div className="h-12 w-12 rounded-full bg-emerald-100 flex items-center justify-center text-emerald-600 shadow-xs">
+                      <FileCheck className="h-6 w-6" />
+                    </div>
+                    <div>
+                      <p className="font-bold text-slate-800 text-sm">{selectedFile.name}</p>
+                      <p className="text-xs text-muted-foreground mt-0.5">
+                        {(selectedFile.size / 1024).toFixed(1)} KB • Clique ou arraste para trocar
+                      </p>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div className="h-12 w-12 rounded-full bg-primary/10 flex items-center justify-center text-primary shadow-xs">
+                      <Upload className="h-6 w-6" />
+                    </div>
+                    <div>
+                      <p className="font-semibold text-slate-800 text-sm">Clique para selecionar ou arraste o arquivo aqui</p>
+                      <p className="text-xs text-muted-foreground mt-1">OFX, CSV ou PDF de qualquer banco ou fatura</p>
+                    </div>
+                  </>
+                )}
+              </div>
+
+              <div className="flex justify-end">
+                <Button
+                  disabled={!selectedFile || !canEdit || isParsingPdf || parseMutation.isPending}
+                  onClick={handleStartParsing}
+                  className="gap-2 font-bold px-6"
+                >
+                  {(isParsingPdf || parseMutation.isPending) && <Loader2 className="h-4 w-4 animate-spin" />}
+                  Processar Arquivo <ArrowRight className="h-4 w-4" />
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Configurações de Origem e Cartão */}
+          <Card className="shadow-xs border-slate-200">
+            <CardHeader className="pb-3">
+              <CardTitle className="text-base flex items-center gap-2">
+                <Building2 className="h-5 w-5 text-primary" /> Conta / Cartão de Destino
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4 text-xs">
+              <div className="space-y-1.5">
+                <Label htmlFor="bank-select" className="font-bold text-slate-700">Banco / Formato:</Label>
+                <Select value={selectedBank} onValueChange={setSelectedBank}>
+                  <SelectTrigger id="bank-select" className="bg-white">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {BANK_OPTIONS.map((b) => (
+                      <SelectItem key={b.id} value={b.id}>
+                        {b.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <p className="text-[11px] text-muted-foreground">
+                  Selecione <strong>Caixa</strong> para faturas com revisão manual de ano e cartão.
                 </p>
               </div>
 
-              <div className="flex flex-col sm:flex-row items-center justify-between gap-3 pt-2">
-                <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                  <FileCheck className="h-4 w-4 text-emerald-600" />
-                  <span>Deduplicação e associação por cartão ativadas</span>
-                </div>
-
-                <Button
-                  id="btn-processar-arquivo"
-                  disabled={!selectedFile || parseMutation.isPending || isParsingPdf || !canEdit}
-                  onClick={() => parseMutation.mutate()}
-                  className="gap-2 font-semibold w-full sm:w-auto"
-                >
-                  {isParsingPdf || parseMutation.isPending ? (
-                    <>
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                      Processando...
-                    </>
-                  ) : (
-                    <>
-                      Processar Arquivo
-                      <ArrowRight className="h-4 w-4" />
-                    </>
-                  )}
-                </Button>
+              <div className="space-y-1.5">
+                <Label htmlFor="card-select" className="font-bold text-slate-700">Conta / Cartão de Destino</Label>
+                <Select value={selectedCreditCardId} onValueChange={setSelectedCreditCardId}>
+                  <SelectTrigger id="card-select" className="bg-white">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">Nenhum (Extrato de Conta Corrente/Pix)</SelectItem>
+                    {creditCards.map((c) => (
+                      <SelectItem key={c.id} value={c.id}>
+                        {c.name} ({c.brand || "Cartão"})
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
             </CardContent>
           </Card>
         </div>
       )}
 
-      {/* ETAPA 2: Tabela de PREVIEW e Revisão com Suporte a Múltiplos Cartões */}
+      {/* ETAPA 2: TABELA DE PREVIEW E REVISÃO MANUAL ANTES DE SALVAR */}
       {previewData && (
-        <div className="space-y-6 animate-in fade-in">
-          {/* Banner de Estatísticas e Ações */}
-          <Card className="bg-white border shadow-xs">
-            <CardContent className="p-4 sm:p-6">
-              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-                <div className="space-y-1">
-                  <div className="flex items-center gap-2">
-                    <h3 className="text-lg font-bold text-slate-900">
-                      Revisão do Extrato: {previewData.summary.bankName || "Detectado"}
-                    </h3>
-                    <Badge variant="outline" className="font-mono text-xs uppercase">
-                      {previewData.summary.fileType}
-                    </Badge>
-                    {hasMultipleCards && (
-                      <Badge className="bg-purple-100 text-purple-700 hover:bg-purple-200 border-purple-200 text-xs">
-                        <Users className="h-3 w-3 mr-1" /> Múltiplos Cartões
-                      </Badge>
-                    )}
-                  </div>
-                  <p className="text-xs text-muted-foreground">
-                    Período: {previewData.summary.startDate || "Início"} até {previewData.summary.endDate || "Fim"} •{" "}
-                    {stats.selected} de {stats.total} transações selecionadas
-                  </p>
-                </div>
-
-                <div className="flex items-center gap-2">
-                  {hasMultipleCards && (
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => setGroupByCardView(!groupByCardView)}
-                      className="text-xs gap-1.5"
-                    >
-                      <CardIcon className="h-3.5 w-3.5 text-primary" />
-                      {groupByCardView ? "Exibição em Lista Única" : "Agrupar por Cartão"}
-                    </Button>
-                  )}
-                  <Button variant="outline" size="sm" onClick={handleReset} className="text-xs">
-                    Cancelar
-                  </Button>
-                  <Button
-                    id="btn-confirmar-importacao"
-                    size="sm"
-                    disabled={stats.selected === 0 || confirmMutation.isPending || !canEdit}
-                    onClick={() => setIsConfirmModalOpen(true)}
-                    className="gap-2 text-xs font-semibold bg-emerald-600 hover:bg-emerald-700"
-                  >
-                    <CheckCircle2 className="h-4 w-4" />
-                    Confirmar Importação ({stats.selected})
-                  </Button>
-                </div>
-              </div>
-
-              {/* Badges de Resumo */}
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-4 pt-4 border-t">
-                <div className="p-2.5 rounded-lg bg-slate-50 border">
-                  <span className="text-[11px] text-muted-foreground block">Total Encontrado</span>
-                  <span className="text-base font-bold text-slate-900">{stats.total} itens</span>
-                </div>
-
-                <div className="p-2.5 rounded-lg bg-emerald-50/50 border border-emerald-100">
-                  <span className="text-[11px] text-emerald-700 flex items-center gap-1">
-                    <Sparkles className="h-3 w-3" /> Auto-categorizados
-                  </span>
-                  <span className="text-base font-bold text-emerald-800">{stats.autoCategorized} itens</span>
-                </div>
-
-                <div className="p-2.5 rounded-lg bg-amber-50/50 border border-amber-100">
-                  <span className="text-[11px] text-amber-700 flex items-center gap-1">
-                    <AlertTriangle className="h-3 w-3" /> Possíveis Duplicados
-                  </span>
-                  <span className="text-base font-bold text-amber-800">{stats.duplicates} itens</span>
-                </div>
-
-                <div className="p-2.5 rounded-lg bg-indigo-50/50 border border-indigo-100">
-                  <span className="text-[11px] text-indigo-700 block">Saldo Selecionado</span>
-                  <span className={`text-base font-bold ${stats.totalSelectedAmount >= 0 ? "text-emerald-700" : "text-rose-700"}`}>
-                    R$ {stats.totalSelectedAmount.toFixed(2)}
-                  </span>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-
-          {/* Filtros e Busca */}
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-            <div className="flex items-center gap-1.5 overflow-x-auto pb-1">
-              <Button
-                variant={activeTabFilter === "all" ? "default" : "outline"}
-                size="sm"
-                onClick={() => setActiveTabFilter("all")}
-                className="text-xs h-8"
-              >
-                Todas ({stats.total})
-              </Button>
-              <Button
-                variant={activeTabFilter === "selected" ? "default" : "outline"}
-                size="sm"
-                onClick={() => setActiveTabFilter("selected")}
-                className="text-xs h-8"
-              >
-                Selecionadas ({stats.selected})
-              </Button>
-              {stats.duplicates > 0 && (
-                <Button
-                  variant={activeTabFilter === "duplicates" ? "destructive" : "outline"}
-                  size="sm"
-                  onClick={() => setActiveTabFilter("duplicates")}
-                  className="text-xs h-8 gap-1"
-                >
-                  <AlertTriangle className="h-3.5 w-3.5" />
-                  Duplicadas ({stats.duplicates})
-                </Button>
-              )}
+        <div className="space-y-4">
+          {/* Banner do Extrato / Fatura */}
+          <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-3">
+            <div>
+              <h2 className="text-lg font-black text-slate-900 flex items-center gap-2">
+                <FileCheck className="h-5 w-5 text-primary" /> Revisão do Extrato
+              </h2>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                {previewData.filename} • {previewData.totalCount} transações identificadas
+              </p>
             </div>
 
-            <div className="flex items-center gap-2">
-              <div className="relative w-full sm:w-60">
-                <Search className="absolute left-2.5 top-2.5 h-3.5 w-3.5 text-muted-foreground" />
-                <Input
-                  placeholder="Buscar transação ou cartão..."
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  className="pl-8 h-8 text-xs bg-white"
-                />
-              </div>
-
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => handleToggleSelectAll(stats.selected < stats.total)}
-                className="text-xs h-8 whitespace-nowrap"
-              >
-                {stats.selected === stats.total ? "Desmarcar Todos" : "Selecionar Todos"}
-              </Button>
-            </div>
-          </div>
-
-          {/* MODO AGRUPADO POR CARTÃO */}
-          {hasMultipleCards && groupByCardView ? (
-            <div className="space-y-6">
-              {groupedTransactions.map((group) => (
-                <Card key={group.key} className="shadow-xs border bg-white overflow-hidden">
-                  <CardHeader className="bg-slate-50/80 border-b py-3 px-4 flex flex-row items-center justify-between">
-                    <div className="flex items-center gap-2.5">
-                      <div className="p-1.5 bg-primary/10 text-primary rounded-lg">
-                        <CardIcon className="h-4 w-4" />
-                      </div>
-                      <div>
-                        <CardTitle className="text-sm font-bold text-slate-800 flex items-center gap-2">
-                          {group.label}
-                          {group.last4 && (
-                            <Badge variant="outline" className="font-mono text-[10px] bg-white">
-                              Final {group.last4}
-                            </Badge>
-                          )}
-                        </CardTitle>
-                        <CardDescription className="text-[11px]">
-                          {group.items.length} lançamento(s) associado(s)
-                        </CardDescription>
-                      </div>
-                    </div>
-
-                    <div className="flex items-center gap-4 text-xs font-semibold">
-                      {group.totalExpense > 0 && (
-                        <span className="text-slate-700">
-                          Total Despesas: <strong className="text-rose-600">R$ {group.totalExpense.toFixed(2)}</strong>
-                        </span>
-                      )}
-                      {group.totalIncome > 0 && (
-                        <span className="text-slate-700">
-                          Pagamentos/Créditos: <strong className="text-emerald-600">R$ {group.totalIncome.toFixed(2)}</strong>
-                        </span>
-                      )}
-                    </div>
-                  </CardHeader>
-
-                  <CardContent className="p-0">
-                    <div className="overflow-x-auto">
-                      <table className="w-full text-xs text-left">
-                        <thead className="bg-slate-50/40 border-b text-slate-500 font-medium">
-                          <tr>
-                            <th className="p-3 w-10 text-center">#</th>
-                            <th className="p-3 w-24">Data</th>
-                            <th className="p-3">Descrição Original</th>
-                            <th className="p-3 w-32 text-right">Valor</th>
-                            <th className="p-3 w-48">Categoria Sugerida</th>
-                            <th className="p-3 w-28 text-center">Parcelas</th>
-                            <th className="p-3 w-24 text-center">Status</th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-slate-100">
-                          {group.items.map((tx) => {
-                            const txKey = tx.tempId || tx.id || "";
-                            return (
-                              <tr
-                                key={txKey}
-                                className={`transition-colors ${
-                                  !tx.selected
-                                    ? "bg-slate-50/50 opacity-60"
-                                    : tx.isPossibleDuplicate
-                                    ? "bg-amber-50/40 hover:bg-amber-50/70"
-                                    : "hover:bg-slate-50/80"
-                                }`}
-                              >
-                                <td className="p-3 text-center">
-                                  <input
-                                    type="checkbox"
-                                    checked={tx.selected}
-                                    onChange={() => handleToggleSelect(txKey)}
-                                    className="rounded border-slate-300 text-primary focus:ring-primary h-4 w-4 cursor-pointer"
-                                  />
-                                </td>
-                                <td className="p-3 whitespace-nowrap font-medium text-slate-600">
-                                  {tx.date.split("-").reverse().join("/")}
-                                </td>
-                                <td className="p-3">
-                                  <div className="font-semibold text-slate-800">{tx.description}</div>
-                                  {tx.cardLabel && (
-                                    <div className="text-[10px] text-muted-foreground flex items-center gap-1 mt-0.5">
-                                      <CreditCardIcon className="h-3 w-3" /> {tx.cardLabel}
-                                    </div>
-                                  )}
-                                </td>
-                                <td className="p-3 text-right whitespace-nowrap">
-                                  <span
-                                    className={`font-bold ${
-                                      tx.type === "income" ? "text-emerald-600" : "text-slate-900"
-                                    }`}
-                                  >
-                                    {tx.type === "income" ? "+ " : "- "}
-                                    R$ {tx.amount.toFixed(2)}
-                                  </span>
-                                </td>
-                                <td className="p-3">
-                                  <Select
-                                    value={tx.categoryId ? String(tx.categoryId) : "none"}
-                                    onValueChange={(val) =>
-                                      handleCategoryChange(txKey, val === "none" ? null : Number(val))
-                                    }
-                                  >
-                                    <SelectTrigger className="h-8 text-xs bg-white">
-                                      <SelectValue placeholder="Sem categoria" />
-                                    </SelectTrigger>
-                                    <SelectContent>
-                                      <SelectItem value="none">Sem categoria</SelectItem>
-                                      {categories
-                                        .filter((c) => c.type === tx.type)
-                                        .map((cat) => (
-                                          <SelectItem key={cat.id} value={String(cat.id)}>
-                                            {cat.name}
-                                          </SelectItem>
-                                        ))}
-                                    </SelectContent>
-                                  </Select>
-                                </td>
-                                <td className="p-3 text-center">
-                                  <Select
-                                    value={String(tx.installments || 1)}
-                                    onValueChange={(val) => handleInstallmentChange(txKey, Number(val))}
-                                  >
-                                    <SelectTrigger className="h-8 text-xs w-20 mx-auto bg-white">
-                                      <SelectValue />
-                                    </SelectTrigger>
-                                    <SelectContent>
-                                      {Array.from({ length: 12 }, (_, i) => i + 1).map((n) => (
-                                        <SelectItem key={n} value={String(n)}>
-                                          {n === 1 ? "À vista" : `${n}x`}
-                                        </SelectItem>
-                                      ))}
-                                    </SelectContent>
-                                  </Select>
-                                </td>
-                                <td className="p-3 text-center">
-                                  {tx.isPossibleDuplicate ? (
-                                    <Badge variant="outline" className="text-[10px] bg-amber-50 text-amber-700 border-amber-200">
-                                      Duplicada?
-                                    </Badge>
-                                  ) : tx.autoCategorized ? (
-                                    <Badge variant="outline" className="text-[10px] bg-emerald-50 text-emerald-700 border-emerald-200">
-                                      Auto
-                                    </Badge>
-                                  ) : (
-                                    <Badge variant="outline" className="text-[10px] text-slate-500">
-                                      Nova
-                                    </Badge>
-                                  )}
-                                </td>
-                              </tr>
-                            );
-                          })}
-                        </tbody>
-                      </table>
-                    </div>
-                  </CardContent>
-                </Card>
-              ))}
-            </div>
-          ) : (
-            /* MODO TABELA ÚNICA */
-            <div className="border rounded-xl bg-white shadow-xs overflow-hidden">
-              <div className="overflow-x-auto">
-                <table className="w-full text-xs text-left">
-                  <thead className="bg-slate-50 border-b text-slate-500 font-semibold">
-                    <tr>
-                      <th className="p-3 w-10 text-center">
-                        <input
-                          type="checkbox"
-                          checked={stats.selected === stats.total && stats.total > 0}
-                          onChange={(e) => handleToggleSelectAll(e.target.checked)}
-                          className="rounded border-slate-300 text-primary focus:ring-primary h-4 w-4 cursor-pointer"
-                        />
-                      </th>
-                      <th className="p-3 w-24">Data</th>
-                      <th className="p-3">Descrição Original</th>
-                      {hasMultipleCards && <th className="p-3 w-32">Cartão</th>}
-                      <th className="p-3 w-32 text-right">Valor</th>
-                      <th className="p-3 w-48">Categoria Sugerida</th>
-                      <th className="p-3 w-28 text-center">Parcelas</th>
-                      <th className="p-3 w-24 text-center">Status</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100">
-                    {filteredTransactions.length === 0 ? (
-                      <tr>
-                        <td colSpan={hasMultipleCards ? 8 : 7} className="p-8 text-center text-slate-400">
-                          Nenhuma transação encontrada com o filtro selecionado.
-                        </td>
-                      </tr>
-                    ) : (
-                      filteredTransactions.map((tx) => {
-                        const txKey = tx.tempId || tx.id || "";
-                        return (
-                          <tr
-                            key={txKey}
-                            className={`transition-colors ${
-                              !tx.selected
-                                ? "bg-slate-50/50 opacity-60"
-                                : tx.isPossibleDuplicate
-                                ? "bg-amber-50/40 hover:bg-amber-50/70"
-                                : "hover:bg-slate-50/80"
-                            }`}
-                          >
-                            <td className="p-3 text-center">
-                              <input
-                                type="checkbox"
-                                checked={tx.selected}
-                                onChange={() => handleToggleSelect(txKey)}
-                                className="rounded border-slate-300 text-primary focus:ring-primary h-4 w-4 cursor-pointer"
-                              />
-                            </td>
-                            <td className="p-3 whitespace-nowrap font-medium text-slate-600">
-                              {tx.date.split("-").reverse().join("/")}
-                            </td>
-                            <td className="p-3">
-                              <div className="font-semibold text-slate-800">{tx.description}</div>
-                              {tx.memo && (
-                                <div className="text-[11px] text-slate-400 truncate max-w-xs">{tx.memo}</div>
-                              )}
-                            </td>
-                            {hasMultipleCards && (
-                              <td className="p-3">
-                                {tx.cardLast4 ? (
-                                  <Badge variant="outline" className="font-mono text-[10px] bg-slate-50">
-                                    •••• {tx.cardLast4}
-                                  </Badge>
-                                ) : (
-                                  <span className="text-slate-400 text-[11px]">-</span>
-                                )}
-                              </td>
-                            )}
-                            <td className="p-3 text-right whitespace-nowrap">
-                              <span
-                                className={`font-bold ${
-                                  tx.type === "income" ? "text-emerald-600" : "text-slate-900"
-                                }`}
-                              >
-                                {tx.type === "income" ? "+ " : "- "}
-                                R$ {tx.amount.toFixed(2)}
-                              </span>
-                            </td>
-                            <td className="p-3">
-                              <Select
-                                value={tx.categoryId ? String(tx.categoryId) : "none"}
-                                onValueChange={(val) =>
-                                  handleCategoryChange(txKey, val === "none" ? null : Number(val))
-                                }
-                              >
-                                <SelectTrigger className="h-8 text-xs bg-white">
-                                  <SelectValue placeholder="Sem categoria" />
-                                </SelectTrigger>
-                                <SelectContent>
-                                  <SelectItem value="none">Sem categoria</SelectItem>
-                                  {categories
-                                    .filter((c) => c.type === tx.type)
-                                    .map((cat) => (
-                                      <SelectItem key={cat.id} value={String(cat.id)}>
-                                        {cat.name}
-                                      </SelectItem>
-                                    ))}
-                                </SelectContent>
-                              </Select>
-                            </td>
-                            <td className="p-3 text-center">
-                              <Select
-                                value={String(tx.installments || 1)}
-                                onValueChange={(val) => handleInstallmentChange(txKey, Number(val))}
-                              >
-                                <SelectTrigger className="h-8 text-xs w-20 mx-auto bg-white">
-                                  <SelectValue />
-                                </SelectTrigger>
-                                <SelectContent>
-                                  {Array.from({ length: 12 }, (_, i) => i + 1).map((n) => (
-                                    <SelectItem key={n} value={String(n)}>
-                                      {n === 1 ? "À vista" : `${n}x`}
-                                    </SelectItem>
-                                  ))}
-                                </SelectContent>
-                              </Select>
-                            </td>
-                            <td className="p-3 text-center">
-                              {tx.isPossibleDuplicate ? (
-                                <Badge variant="outline" className="text-[10px] bg-amber-50 text-amber-700 border-amber-200">
-                                  Duplicada?
-                                </Badge>
-                              ) : tx.autoCategorized ? (
-                                <Badge variant="outline" className="text-[10px] bg-emerald-50 text-emerald-700 border-emerald-200">
-                                  Auto
-                                </Badge>
-                              ) : (
-                                <Badge variant="outline" className="text-[10px] text-slate-500">
-                                  Nova
-                                </Badge>
-                              )}
-                            </td>
-                          </tr>
-                        );
-                      })
-                    )}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* Modal de Confirmação */}
-      <Dialog open={isConfirmModalOpen} onOpenChange={setIsConfirmModalOpen}>
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle>Confirmar Gravação de Lançamentos</DialogTitle>
-            <DialogDescription>
-              Você está prestes a importar <strong>{stats.selected} transações</strong> para o workspace{" "}
-              <strong>{activeWorkspace?.name}</strong>.
-            </DialogDescription>
-          </DialogHeader>
-
-          <div className="p-4 rounded-lg bg-slate-50 border space-y-2 text-xs">
-            <div className="flex justify-between">
-              <span className="text-muted-foreground">Total de transações:</span>
-              <span className="font-bold text-slate-800">{stats.selected}</span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-muted-foreground">Destino Padrão:</span>
-              <span className="font-bold text-slate-800">
-                {selectedCreditCardId === "none"
-                  ? "Conta Corrente / Dinheiro"
-                  : creditCards.find((c) => c.id === selectedCreditCardId)?.name || "Cartão"}
-              </span>
-            </div>
             {hasMultipleCards && (
-              <div className="flex justify-between text-purple-700 font-medium">
-                <span>Múltiplos Cartões Detectados:</span>
-                <span>{groupedTransactions.length} cartões identificados</span>
-              </div>
+              <Badge className="bg-purple-100 text-purple-800 border-purple-200 text-xs font-bold gap-1 px-3 py-1">
+                <CardIcon className="h-3.5 w-3.5" /> Múltiplos Cartões Detectados
+              </Badge>
             )}
           </div>
 
+          {/* Banner de Revisão Manual (Ex: Fatura Caixa sem ano) */}
+          {isManualReviewMode && (
+            <div className="p-4 rounded-xl bg-amber-50/90 border border-amber-200 text-amber-900 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-4">
+              <div className="flex items-start gap-3">
+                <AlertTriangle className="h-5 w-5 text-amber-600 shrink-0 mt-0.5" />
+                <div>
+                  <h4 className="font-bold text-sm">Fatura com Revisão Manual Obrigatória</h4>
+                  <p className="text-xs text-amber-800 mt-0.5">
+                    O arquivo da Caixa não contém o ano das compras (apenas DD/MM). Defina o ano e revise os campos antes de confirmar para salvar no banco.
+                  </p>
+                </div>
+              </div>
+
+              {/* Ferramenta de Ano Global */}
+              <div className="flex items-center gap-2 shrink-0 bg-white/80 p-2 rounded-lg border border-amber-200">
+                <Label htmlFor="global-year-input" className="text-xs font-bold text-slate-700">
+                  Ano padrão:
+                </Label>
+                <Input
+                  id="global-year-input"
+                  type="number"
+                  min={1970}
+                  max={2100}
+                  value={globalYear}
+                  onChange={(e) => setGlobalYear(parseInt(e.target.value, 10) || new Date().getFullYear())}
+                  className="h-8 w-24 text-xs font-bold bg-white"
+                />
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  onClick={handleApplyYearToAll}
+                  className="h-8 text-xs font-semibold bg-white"
+                  title="Aplica este ano a todas as linhas da tabela"
+                >
+                  Aplicar a todos
+                </Button>
+              </div>
+            </div>
+          )}
+
+          {/* Barra de Controles e Filtros */}
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-white p-3 rounded-xl border border-slate-200 shadow-xs">
+            <div className="flex items-center gap-2">
+              <Button
+                variant={isAllSelected ? "default" : "outline"}
+                size="sm"
+                onClick={() => handleToggleSelectAll(!isAllSelected)}
+                className="gap-1.5 text-xs font-semibold h-9"
+              >
+                {isAllSelected ? <CheckSquare className="h-4 w-4" /> : <Square className="h-4 w-4" />}
+                {isAllSelected ? "Desmarcar Todos" : "Selecionar Todos"}
+              </Button>
+
+              <Badge variant="secondary" className="font-bold text-xs bg-slate-100">
+                {selectedCount} de {transactions.length} selecionados
+              </Badge>
+            </div>
+
+            <div className="flex items-center gap-2 flex-1 sm:max-w-xs">
+              <Search className="h-4 w-4 text-slate-400 shrink-0" />
+              <Input
+                placeholder="Buscar por descrição, cartão..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="h-9 text-xs bg-white"
+              />
+            </div>
+
+            <div className="flex items-center gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  setPreviewData(null);
+                  setSelectedFile(null);
+                  setTransactions([]);
+                  setIsManualReviewMode(false);
+                }}
+                className="text-xs h-9"
+              >
+                Trocar Arquivo
+              </Button>
+
+              <Button
+                disabled={selectedCount === 0 || confirmMutation.isPending || !canEdit}
+                onClick={() => setIsConfirmModalOpen(true)}
+                className="gap-2 font-bold text-xs h-9 bg-emerald-600 hover:bg-emerald-700 text-white"
+              >
+                {confirmMutation.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
+                <Check className="h-4 w-4" /> Confirmar Importação ({selectedCount})
+              </Button>
+            </div>
+          </div>
+
+          {/* TABELA DE REVISÃO */}
+          <div className="border border-slate-200 rounded-xl overflow-hidden bg-white shadow-xs">
+            <div className="overflow-x-auto max-h-[65vh]">
+              <table className="w-full text-left text-xs border-collapse">
+                <thead className="bg-slate-100 text-slate-700 font-bold uppercase tracking-wider sticky top-0 z-10 border-b border-slate-200">
+                  <tr>
+                    <th className="p-3 w-10 text-center">
+                      <input
+                        type="checkbox"
+                        checked={isAllSelected}
+                        onChange={(e) => handleToggleSelectAll(e.target.checked)}
+                        className="rounded border-slate-300 text-primary focus:ring-primary h-4 w-4 cursor-pointer"
+                      />
+                    </th>
+                    <th className="p-3 w-28">Data</th>
+                    {isManualReviewMode && <th className="p-3 w-24">Ano</th>}
+                    <th className="p-3 min-w-[220px]">Descrição</th>
+                    <th className="p-3 w-32">Valor (R$)</th>
+                    <th className="p-3 w-28">Tipo</th>
+                    <th className="p-3 min-w-[150px]">Cartão</th>
+                    <th className="p-3 min-w-[180px]">Categoria</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {filteredTransactions.map((tx, idx) => {
+                    const originalIndex = transactions.findIndex((t) => t === tx || (t.id && t.id === tx.id));
+                    const targetIdx = originalIndex !== -1 ? originalIndex : idx;
+
+                    return (
+                      <tr
+                        key={tx.id || idx}
+                        className={`hover:bg-slate-50/80 transition-colors ${
+                          tx.selected ? "bg-white" : "bg-slate-50/50 opacity-60"
+                        }`}
+                      >
+                        {/* Checkbox */}
+                        <td className="p-3 text-center">
+                          <input
+                            type="checkbox"
+                            checked={!!tx.selected}
+                            onChange={() => handleToggleSelect(targetIdx)}
+                            className="rounded border-slate-300 text-primary focus:ring-primary h-4 w-4 cursor-pointer"
+                          />
+                        </td>
+
+                        {/* Data Parcial (Readonly) */}
+                        <td className="p-3 whitespace-nowrap">
+                          <Badge variant="outline" className="font-mono text-xs font-bold bg-slate-50">
+                            <Calendar className="h-3 w-3 mr-1 text-slate-500" />
+                            {tx.dataParcial || tx.date}
+                          </Badge>
+                        </td>
+
+                        {/* Campo ANO Editável (se modo manual) */}
+                        {isManualReviewMode && (
+                          <td className="p-3">
+                            <Input
+                              type="number"
+                              min={1970}
+                              max={2100}
+                              value={tx.ano || globalYear}
+                              onChange={(e) =>
+                                handleUpdateTransactionField(targetIdx, "ano", parseInt(e.target.value, 10) || globalYear)
+                              }
+                              className="h-8 w-20 text-xs font-bold text-center bg-white border-slate-300"
+                            />
+                          </td>
+                        )}
+
+                        {/* Descrição Editável */}
+                        <td className="p-3">
+                          {isManualReviewMode ? (
+                            <Input
+                              value={tx.description}
+                              onChange={(e) => handleUpdateTransactionField(targetIdx, "description", e.target.value)}
+                              className="h-8 text-xs font-medium bg-white border-slate-300"
+                            />
+                          ) : (
+                            <span className="font-semibold text-slate-800">{tx.description}</span>
+                          )}
+                        </td>
+
+                        {/* Valor Editável */}
+                        <td className="p-3">
+                          {isManualReviewMode ? (
+                            <Input
+                              type="number"
+                              step="0.01"
+                              min="0"
+                              value={tx.amount}
+                              onChange={(e) =>
+                                handleUpdateTransactionField(targetIdx, "amount", parseFloat(e.target.value) || 0)
+                              }
+                              className="h-8 w-28 text-xs font-bold text-right bg-white border-slate-300"
+                            />
+                          ) : (
+                            <span className={`font-bold ${tx.type === "income" ? "text-emerald-600" : "text-slate-900"}`}>
+                              {tx.amount.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
+                            </span>
+                          )}
+                        </td>
+
+                        {/* Tipo Débito (D) / Crédito (C) Editável */}
+                        <td className="p-3">
+                          {isManualReviewMode ? (
+                            <Select
+                              value={tx.type}
+                              onValueChange={(val: "income" | "expense") => {
+                                handleUpdateTransactionField(targetIdx, "type", val);
+                                handleUpdateTransactionField(targetIdx, "tipo", val === "income" ? "C" : "D");
+                              }}
+                            >
+                              <SelectTrigger className="h-8 text-xs font-bold bg-white">
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="expense">🔴 Débito (D)</SelectItem>
+                                <SelectItem value="income">🟢 Crédito (C)</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          ) : (
+                            <Badge variant={tx.type === "income" ? "default" : "secondary"} className="text-[11px] font-bold">
+                              {tx.type === "income" ? "Receita" : "Despesa"}
+                            </Badge>
+                          )}
+                        </td>
+
+                        {/* Cartão */}
+                        <td className="p-3">
+                          {isManualReviewMode ? (
+                            <Input
+                              value={tx.cartao || tx.cardLabel || "Cartão"}
+                              onChange={(e) => {
+                                handleUpdateTransactionField(targetIdx, "cartao", e.target.value);
+                                handleUpdateTransactionField(targetIdx, "cardLabel", e.target.value);
+                              }}
+                              className="h-8 text-xs bg-white border-slate-300"
+                            />
+                          ) : (
+                            <span className="text-slate-600 font-medium">
+                              {tx.cardLabel || (tx.cardLast4 ? `•••• ${tx.cardLast4}` : "Conta")}
+                            </span>
+                          )}
+                        </td>
+
+                        {/* Categoria */}
+                        <td className="p-3">
+                          <Select
+                            value={tx.categoryId ? String(tx.categoryId) : "none"}
+                            onValueChange={(val) => handleUpdateCategory(targetIdx, val)}
+                          >
+                            <SelectTrigger className="h-8 text-xs bg-white">
+                              <SelectValue placeholder="Selecione categoria" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="none">Sem categoria</SelectItem>
+                              {categories
+                                .filter((c) => c.type === tx.type)
+                                .map((c) => (
+                                  <SelectItem key={c.id} value={String(c.id)}>
+                                    {c.name}
+                                  </SelectItem>
+                                ))}
+                            </SelectContent>
+                          </Select>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL DE CONFIRMAÇÃO FINAL */}
+      <Dialog open={isConfirmModalOpen} onOpenChange={setIsConfirmModalOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="text-base flex items-center gap-2">
+              <CheckCircle2 className="h-5 w-5 text-emerald-600" /> Confirmar Gravação no Banco
+            </DialogTitle>
+            <DialogDescription className="text-xs">
+              Você está prestes a gravar <strong>{selectedCount}</strong> transações revisadas no workspace <strong>{activeWorkspace?.name}</strong>.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="py-3 text-xs space-y-2 bg-slate-50 p-3 rounded-lg border">
+            <div className="flex justify-between">
+              <span className="text-muted-foreground">Total de itens:</span>
+              <strong className="font-bold">{selectedCount}</strong>
+            </div>
+            {isManualReviewMode && (
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Ano de referência aplicado:</span>
+                <strong className="font-bold">{globalYear}</strong>
+              </div>
+            )}
+            <div className="flex justify-between">
+              <span className="text-muted-foreground">Workspace destino:</span>
+              <strong className="font-bold">{activeWorkspace?.name}</strong>
+            </div>
+          </div>
+
           <DialogFooter className="gap-2 sm:gap-0">
-            <Button variant="outline" onClick={() => setIsConfirmModalOpen(false)}>
-              Revisar Mais
+            <Button variant="outline" size="sm" onClick={() => setIsConfirmModalOpen(false)}>
+              Cancelar
             </Button>
             <Button
+              size="sm"
               disabled={confirmMutation.isPending}
               onClick={() => confirmMutation.mutate()}
-              className="bg-emerald-600 hover:bg-emerald-700 font-semibold gap-2"
+              className="gap-2 font-bold bg-emerald-600 hover:bg-emerald-700 text-white"
             >
-              {confirmMutation.isPending ? "Salvando..." : "Confirmar e Gravar"}
+              {confirmMutation.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
+              Salvar Transações no Banco
             </Button>
           </DialogFooter>
         </DialogContent>

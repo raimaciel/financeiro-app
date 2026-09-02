@@ -13,6 +13,7 @@ vi.mock("@/hooks/useAuth", () => ({
     isLoading: false,
   }),
 }));
+
 const mockWorkspaces = [{ id: "ws-1", name: "Workspace Teste", type: "personal", role: "owner" }];
 const mockCategories = [
   { id: 1, name: "Alimentação", color: "#FF5733", type: "expense" },
@@ -74,9 +75,36 @@ vi.mocked(api.get).mockImplementation((url: string) => {
   return Promise.resolve({ data: [] }) as any;
 });
 
-vi.mocked(api.post).mockImplementation((url: string) => {
+vi.mocked(api.post).mockImplementation((url: string, data: any) => {
+  if (url.includes("/import/preview")) {
+    return Promise.resolve({
+      data: {
+        success: true,
+        totalCount: 2,
+        precisaRevisao: true,
+        transactions: [
+          {
+            dataParcial: "05/03",
+            descricao: "SUPERMERCADO ABC",
+            valor: 154.3,
+            tipo: "D",
+            cartao: "Cartão 1234",
+            precisaRevisao: true,
+          },
+          {
+            dataParcial: "15/03",
+            descricao: "ESTORNO COMPRA",
+            valor: 80.0,
+            tipo: "C",
+            cartao: "Cartão 1234",
+            precisaRevisao: true,
+          },
+        ],
+      },
+    }) as any;
+  }
   if (url.includes("/import/parse")) return Promise.resolve({ data: mockParseResponse }) as any;
-  if (url.includes("/import/confirm")) return Promise.resolve({ data: { success: true, count: 1, message: "1 transação importada!" } }) as any;
+  if (url.includes("/import/confirm")) return Promise.resolve({ data: { success: true, count: 2, message: "2 transações importadas com sucesso!" } }) as any;
   return Promise.resolve({ data: {} }) as any;
 });
 
@@ -99,7 +127,7 @@ describe("Página de Importação de Extratos", () => {
     expect(screen.getByText(/Importar Extrato Bancário/i)).toBeInTheDocument();
     await waitFor(() => {
       expect(screen.getByText(/Clique para selecionar ou arraste o arquivo aqui/i)).toBeInTheDocument();
-      expect(screen.getByText(/Conta \/ Cartão de Destino/i)).toBeInTheDocument();
+      expect(screen.getAllByText(/Conta \/ Cartão de Destino/i).length).toBeGreaterThan(0);
     });
   });
 
@@ -113,7 +141,7 @@ describe("Página de Importação de Extratos", () => {
     const { container } = renderImport();
 
     await waitFor(() => {
-      expect(screen.getByText(/Conta \/ Cartão de Destino/i)).toBeInTheDocument();
+      expect(screen.getAllByText(/Conta \/ Cartão de Destino/i).length).toBeGreaterThan(0);
     });
 
     const file = new File(["Data,Valor,Descricao\n2026-08-15,-150.50,Supermercado"], "extrato.csv", {
@@ -153,7 +181,7 @@ Cartão Adicional 543882*******1711
     const { container } = renderImport();
 
     await waitFor(() => {
-      expect(screen.getByText(/Conta \/ Cartão de Destino/i)).toBeInTheDocument();
+      expect(screen.getAllByText(/Conta \/ Cartão de Destino/i).length).toBeGreaterThan(0);
     });
 
     const pdfFile = new File(["%PDF-1.4 dummy content"], "fatura_agosto.pdf", {
@@ -166,14 +194,76 @@ Cartão Adicional 543882*******1711
     const submitBtn = await screen.findByRole("button", { name: /Processar Arquivo/i });
     fireEvent.click(submitBtn);
 
-    // Verifica que exibiu o preview com múltiplos cartões
     const multiCardBadge = await screen.findByText((c) => c.includes("Múltiplos Cartões"));
     expect(multiCardBadge).toBeInTheDocument();
 
-    // Verifica os cartões agrupados
     expect((await screen.findAllByText(/6768/i)).length).toBeGreaterThan(0);
     expect((await screen.findAllByText(/1711/i)).length).toBeGreaterThan(0);
     expect(await screen.findByText("Supermercado Pão de Açúcar")).toBeInTheDocument();
     expect(await screen.findByText("Farmácia Drogasil")).toBeInTheDocument();
+  });
+
+  it("deve processar fatura Caixa com REVISÃO MANUAL exibindo campo ANO editável e sem adivinhar ano", async () => {
+    vi.spyOn(pdfParser, "extractTextFromPdf").mockResolvedValue(`
+CAIXA ECONOMICA FEDERAL
+Nome do Titular: JOAO DA SILVA
+CPF: 123.456.789-00
+
+(Cartão 1234)
+05/03 SUPERMERCADO ABC 154,30D
+15/03 ESTORNO COMPRA 80,00C
+    `);
+
+    const { container } = renderImport();
+
+    await waitFor(() => {
+      expect(screen.getAllByText(/Conta \/ Cartão de Destino/i).length).toBeGreaterThan(0);
+    });
+
+    const caixaPdf = new File(["%PDF dummy caixa"], "fatura_caixa.pdf", {
+      type: "application/pdf",
+    });
+
+    const fileInput = container.querySelector('input[type="file"]') as HTMLInputElement;
+    fireEvent.change(fileInput, { target: { files: [caixaPdf] } });
+
+    const submitBtn = await screen.findByRole("button", { name: /Processar Arquivo/i });
+    fireEvent.click(submitBtn);
+
+    // Banner de revisão manual
+    expect(await screen.findByText(/Fatura com Revisão Manual Obrigatória/i)).toBeInTheDocument();
+
+    // Verificar Data Parcial e valor
+    expect(await screen.findByText("05/03")).toBeInTheDocument();
+    expect(await screen.findByDisplayValue("SUPERMERCADO ABC")).toBeInTheDocument();
+
+    // Botão Confirmar Importação
+    const confirmBtn = screen.getByRole("button", { name: /Confirmar Importação/i });
+    expect(confirmBtn).toBeInTheDocument();
+
+    fireEvent.click(confirmBtn);
+
+    // Modal de confirmação
+    expect(await screen.findByText(/Confirmar Gravação no Banco/i)).toBeInTheDocument();
+
+    const saveBtn = screen.getByRole("button", { name: /Salvar Transações no Banco/i });
+    fireEvent.click(saveBtn);
+
+    await waitFor(() => {
+      expect(api.post).toHaveBeenCalledWith(
+        "/api/import/confirm",
+        expect.objectContaining({
+          workspaceId: "ws-1",
+          transactions: expect.arrayContaining([
+            expect.objectContaining({
+              dataParcial: "05/03",
+              ano: 2026,
+              descricao: "SUPERMERCADO ABC",
+              valor: 154.3,
+            }),
+          ]),
+        })
+      );
+    });
   });
 });

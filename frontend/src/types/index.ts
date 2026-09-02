@@ -197,6 +197,13 @@ export interface ImportedTransaction {
   id?: string;
   tempId?: string;
   date: string;
+  dataParcial?: string;
+  ano?: number;
+  precisaRevisao?: boolean;
+  cartao?: string;
+  descricao?: string;
+  valor?: number;
+  tipo?: "D" | "C" | "income" | "expense";
   description: string;
   cleanDescription?: string;
   amount: number;

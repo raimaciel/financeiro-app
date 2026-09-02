@@ -204,6 +204,7 @@ app.route('/', transactionsRouter);
 app.route('/', invoicesRouter);
 app.route('/', dashboardRouter);
 app.route('/', importRouter);
+app.route('/api', importRouter);
 app.route('/', recurringRouter);
 app.route('/', budgetsRouter);
 app.route('/', notificationsRouter);
