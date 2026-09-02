@@ -3,7 +3,7 @@ import { authMiddleware } from '../auth';
 import type { Bindings, Variables } from '../auth';
 import { parseOFX } from '../utils/ofxParser';
 import { parseCSV } from '../utils/csvParser';
-import { extractRawTransactions, extractInvoiceHeader } from '../utils/caixaInvoiceParser';
+import { parseInvoiceByBank, detectBankFromText } from '../utils/bankInvoiceParsers';
 import { normalizeInvoiceTransactions } from '../utils/invoiceCompetenceEngine';
 import { suggestCategory } from '../utils/categoryRules';
 import { detectInstallment } from '../utils/installmentDetector';
@@ -46,7 +46,7 @@ async function resolveUserWorkspaceId(db: D1Database, userId: string, preferredW
 }
 
 // =========================================================================
-// 1. ENDPOINTS DE PREVIEW (CAIXA / FATURAS PDF) - CAMADA 2 ENGINE
+// 1. ENDPOINTS DE PREVIEW MULTI-BANCO (PDF / TEXTO) - CAMADAS 1 E 2
 // =========================================================================
 
 async function handlePreview(c: any) {
@@ -56,6 +56,7 @@ async function handlePreview(c: any) {
 
 		let pdfText = '';
 		let targetWorkspaceId = c.req.param('workspaceId') || null;
+		let requestedBank = 'auto';
 
 		const contentType = c.req.header('content-type') || '';
 
@@ -63,11 +64,14 @@ async function handlePreview(c: any) {
 			const body = await c.req.json();
 			pdfText = body.pdfText || body.text || '';
 			if (body.workspaceId) targetWorkspaceId = body.workspaceId;
+			if (body.bank) requestedBank = body.bank;
 		} else if (contentType.includes('multipart/form-data')) {
 			const formData = await c.req.formData();
 			pdfText = (formData.get('pdfText') as string) || (formData.get('text') as string) || '';
 			const formWs = formData.get('workspaceId') as string | null;
 			if (formWs) targetWorkspaceId = formWs;
+			const formBank = formData.get('bank') as string | null;
+			if (formBank) requestedBank = formBank;
 		} else {
 			pdfText = await c.req.text();
 		}
@@ -76,14 +80,13 @@ async function handlePreview(c: any) {
 			return c.json({ error: 'Nenhum texto de fatura fornecido para análise.' }, 400);
 		}
 
-		// Camada 1: Extração Bruta de Dados
-		const rawTransactions = extractRawTransactions(pdfText);
-		const invoiceHeader = extractInvoiceHeader(pdfText);
+		// Camada 1: Extração Multi-Banco com Auto-Detecção
+		const { header, rawTransactions, detectedBank } = parseInvoiceByBank(pdfText, requestedBank);
 
 		if (rawTransactions.length === 0) {
 			return c.json(
 				{
-					error: 'Nenhuma transação válida encontrada no texto da fatura. Certifique-se de que o PDF/texto contém linhas no formato: DD/MM DESCRIÇÃO VALOR(D|C).',
+					error: `Não foi possível identificar transações válidas neste arquivo para o banco selecionado (${detectedBank.toUpperCase()}). Verifique o formato do documento.`,
 				},
 				400
 			);
@@ -110,13 +113,14 @@ async function handlePreview(c: any) {
 		// Camada 2: Engine Agnóstica de Competência e Normalização
 		const normalized = normalizeInvoiceTransactions(
 			rawTransactions,
-			invoiceHeader,
+			header,
 			existingCreditCards,
 			existingCategories
 		);
 
 		return c.json({
 			success: true,
+			detectedBank,
 			totalCount: normalized.transactions.length,
 			precisaRevisao: true,
 			mesReferenciaFatura: normalized.mesReferenciaFatura,
@@ -166,7 +170,6 @@ async function handleConfirm(c: any) {
 		const statements: any[] = [];
 
 		for (const item of rawTransactions) {
-			// Camada 3: Resolução estrita da data de competência da fatura (YYYY-MM-DD)
 			let isoDate: string | null = null;
 
 			if (item.dataCompetencia && /^\d{4}-\d{2}-\d{2}$/.test(String(item.dataCompetencia).trim())) {
@@ -198,10 +201,10 @@ async function handleConfirm(c: any) {
 				continue;
 			}
 
-			// Validação da descrição completa sem truncamento (Bug 1)
+			// Validação da descrição completa sem truncamento
 			const descricao = String(item.descricao || item.description || 'Lançamento Importado').trim();
 
-			// Validação do tipo (D/expense ou C/income)
+			// Validação do tipo
 			const rawType = String(item.tipo || item.type || 'D').toUpperCase();
 			const txType: 'income' | 'expense' = (rawType === 'C' || rawType === 'INCOME') ? 'income' : 'expense';
 
@@ -236,7 +239,7 @@ async function handleConfirm(c: any) {
 		}
 
 		if (statements.length === 0) {
-			return c.json({ error: 'Nenhuma transação com dados válidos (data completa com 4 dígitos no ano, valor e descrição).' }, 400);
+			return c.json({ error: 'Nenhuma transação com dados válidos (data completa, valor e descrição).' }, 400);
 		}
 
 		// Gravar em batches de até 100 statements no Cloudflare D1
@@ -281,7 +284,7 @@ importRouter.post('/workspaces/:workspaceId/import/parse', async (c) => {
 
 		const formData = await c.req.formData();
 		const file = formData.get('file') as File | null;
-		const bankPreset = (formData.get('bank') as string) || 'generic';
+		let bankPreset = (formData.get('bank') as string) || 'generic';
 		const creditCardId = (formData.get('creditCardId') as string) || null;
 
 		if (!file || typeof file === 'string') {
@@ -304,6 +307,10 @@ importRouter.post('/workspaces/:workspaceId/import/parse', async (c) => {
 
 		if (!fileContent || fileContent.trim().length === 0) {
 			return c.json({ error: 'O arquivo enviado está vazio' }, 400);
+		}
+
+		if (bankPreset === 'auto') {
+			bankPreset = detectBankFromText(fileContent);
 		}
 
 		const isOfx =

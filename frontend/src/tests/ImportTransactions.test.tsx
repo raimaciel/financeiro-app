@@ -222,7 +222,7 @@ Vencimento: 10/09/2026
     fireEvent.click(submitBtn);
 
     // Banner de revisão manual
-    expect(await screen.findByText(/Fatura com Revisão Manual Obrigatória/i)).toBeInTheDocument();
+    expect(await screen.findByText(/Fatura com Revisão Manual/i)).toBeInTheDocument();
 
     // Bug 1: Descrição completa sem corte de "03 DE 03 FORTALEZA"
     expect(await screen.findByDisplayValue("NORMATEL HOME CENTER 03 DE 03 FORTALEZA")).toBeInTheDocument();

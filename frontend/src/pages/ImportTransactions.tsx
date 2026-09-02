@@ -14,7 +14,7 @@ import {
   parseTransactionsFromText,
   detectReferenceYear,
 } from "@/utils/pdfParser";
-import { extractRawTransactions, extractInvoiceHeader } from "@/utils/caixaInvoiceParser";
+import { parseInvoiceByBank, detectBankFromText } from "@/utils/bankInvoiceParsers";
 import { normalizeInvoiceTransactions } from "@/utils/invoiceCompetenceEngine";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -79,6 +79,18 @@ const BANK_OPTIONS = [
   { id: "generic", name: "Extrato Genérico (Data, Descrição, Valor)" },
 ];
 
+const BANK_NAMES_MAP: Record<string, string> = {
+  caixa: "Caixa Econômica Federal",
+  nubank: "Nubank",
+  inter: "Banco Inter",
+  itau: "Itaú",
+  bradesco: "Bradesco",
+  santander: "Santander",
+  bb: "Banco do Brasil",
+  c6: "C6 Bank",
+  generic: "Extrato Genérico",
+};
+
 const MONTHS_LIST = [
   { value: 1, label: "01 - Janeiro" },
   { value: 2, label: "02 - Fevereiro" },
@@ -115,7 +127,7 @@ export default function ImportTransactions() {
   const [activeTabFilter, setActiveTabFilter] = useState<"all" | "selected" | "duplicates" | "income" | "expense">("all");
   const [searchQuery, setSearchQuery] = useState("");
 
-  // Modo de revisão manual (ex: Caixa)
+  // Modo de revisão manual
   const [isManualReviewMode, setIsManualReviewMode] = useState(false);
   const [globalYear, setGlobalYear] = useState<number>(() => new Date().getFullYear());
   const [globalMonth, setGlobalMonth] = useState<number>(() => new Date().getMonth() + 1);
@@ -169,7 +181,7 @@ export default function ImportTransactions() {
     enabled: !!selectedWorkspaceId,
   });
 
-  // Processamento de Arquivo PDF no Frontend com suporte à Camada 2 (Engine de Competência)
+  // Processamento de Arquivo PDF no Frontend com suporte Multi-Banco e Camada 2
   const processPdfFile = async (file: File) => {
     setIsParsingPdf(true);
     setErrorMessage(null);
@@ -179,108 +191,64 @@ export default function ImportTransactions() {
         throw new Error("Não foi possível extrair texto do PDF. O arquivo pode ser uma imagem digitalizada.");
       }
 
-      const isCaixaSelected = selectedBank === "caixa";
-      const isCaixaDetected = /caixa\s+econ[oô]mica/i.test(text) || (/\(cart[aã]o\s+\d+\)/i.test(text) && !detectReferenceYear(text));
+      let normalizedList: ImportedTransaction[] = [];
+      let invoiceYear = new Date().getFullYear();
+      let invoiceMonth = new Date().getMonth() + 1;
+      let detectedBankName = "Extrato / Fatura";
 
-      if (isCaixaSelected || isCaixaDetected) {
-        let normalizedList: ImportedTransaction[] = [];
-        let invoiceYear = new Date().getFullYear();
-        let invoiceMonth = new Date().getMonth() + 1;
-
-        try {
-          // Chama o endpoint de preview da Camada 2
-          const previewRes = await api.post("/api/import/preview", {
-            pdfText: text,
-            workspaceId: selectedWorkspaceId,
-          });
-          normalizedList = previewRes.data.transactions || [];
-          invoiceYear = previewRes.data.anoFatura || invoiceYear;
-          invoiceMonth = previewRes.data.mesFatura || invoiceMonth;
-        } catch {
-          // Fallback client-side usando Camada 1 + Camada 2
-          const raw = extractRawTransactions(text);
-          const header = extractInvoiceHeader(text);
-          const normalized = normalizeInvoiceTransactions(
-            raw,
-            header,
-            creditCards,
-            categories,
-            selectedCreditCardId
-          );
-          normalizedList = normalized.transactions as ImportedTransaction[];
-          invoiceYear = normalized.anoFatura;
-          invoiceMonth = normalized.mesFatura;
-        }
-
-        if (normalizedList.length === 0) {
-          throw new Error("Nenhuma transação identificada no formato de fatura Caixa. Verifique o arquivo.");
-        }
-
-        setGlobalYear(invoiceYear);
-        setGlobalMonth(invoiceMonth);
-        setIsManualReviewMode(true);
-        setTransactions(normalizedList);
-        setPreviewData({
-          filename: file.name,
-          fileType: "pdf",
-          totalCount: normalizedList.length,
-          duplicatesCount: 0,
-          newCount: normalizedList.length,
-          summary: {
-            bankName: "Caixa Econômica Federal",
-            fileType: "Fatura PDF (Revisão de Competência)",
-          },
-          transactions: normalizedList,
+      try {
+        // 1. Envia para o endpoint de preview multi-banco do backend
+        const previewRes = await api.post("/api/import/preview", {
+          pdfText: text,
+          workspaceId: selectedWorkspaceId,
+          bank: selectedBank,
         });
 
-        setIsParsingPdf(false);
-        return;
+        normalizedList = previewRes.data.transactions || [];
+        invoiceYear = previewRes.data.anoFatura || invoiceYear;
+        invoiceMonth = previewRes.data.mesFatura || invoiceMonth;
+        const bKey = previewRes.data.detectedBank || selectedBank;
+        detectedBankName = BANK_NAMES_MAP[bKey] || "Fatura Multi-Banco";
+      } catch {
+        // 2. Fallback client-side usando Camada 1 + Camada 2
+        const { header, rawTransactions, detectedBank } = parseInvoiceByBank(text, selectedBank);
+        if (rawTransactions.length === 0) {
+          throw new Error(`Não foi possível identificar transações válidas para ${BANK_NAMES_MAP[detectedBank] || "o banco selecionado"}. Verifique o formato do arquivo.`);
+        }
+
+        const normalized = normalizeInvoiceTransactions(
+          rawTransactions,
+          header,
+          creditCards,
+          categories,
+          selectedCreditCardId
+        );
+
+        normalizedList = normalized.transactions as ImportedTransaction[];
+        invoiceYear = normalized.anoFatura;
+        invoiceMonth = normalized.mesFatura;
+        detectedBankName = BANK_NAMES_MAP[detectedBank] || "Fatura Multi-Banco";
       }
 
-      // Outros PDFs com detecção de ano
-      const refYear = detectReferenceYear(text);
-      const parsedItems = parseTransactionsFromText(text, refYear);
-
-      if (parsedItems.length === 0) {
-        throw new Error("Nenhum lançamento financeiro identificado no PDF. Verifique se é uma fatura ou extrato compatível.");
+      if (normalizedList.length === 0) {
+        throw new Error("Nenhuma transação financeira identificada no documento. Verifique se o arquivo possui lançamentos legíveis.");
       }
 
-      const mappedTransactions: ImportedTransaction[] = parsedItems.map((it, index) => {
-        const type: "income" | "expense" = it.amount > 0 ? "income" : "expense";
-        return {
-          id: `pdf-${index}-${Date.now()}`,
-          tempId: `pdf-${index}`,
-          date: it.date,
-          dataCompetencia: it.date,
-          dataTransacao: it.date.slice(5).split("-").reverse().join("/"),
-          description: it.description,
-          cleanDescription: it.description,
-          amount: Math.abs(it.amount),
-          type,
-          categoryId: null,
-          categoryName: null,
-          creditCardId: selectedCreditCardId !== "none" ? selectedCreditCardId : null,
-          cardLast4: it.cardLast4,
-          cardLabel: it.cardLabel,
-          installments: it.installments || 1,
-          installmentCurrent: it.installmentCurrent || 1,
-          selected: true,
-        };
-      });
-
-      setIsManualReviewMode(false);
-      setTransactions(mappedTransactions);
+      setGlobalYear(invoiceYear);
+      setGlobalMonth(invoiceMonth);
+      setIsManualReviewMode(true);
+      setTransactions(normalizedList);
       setPreviewData({
         filename: file.name,
         fileType: "pdf",
-        totalCount: mappedTransactions.length,
+        totalCount: normalizedList.length,
         duplicatesCount: 0,
-        newCount: mappedTransactions.length,
+        newCount: normalizedList.length,
         summary: {
-          bankName: "Fatura em PDF",
-          fileType: "PDF",
+          bankName: detectedBankName,
+          fileType: "Fatura PDF (Revisão de Competência)",
         },
-        transactions: mappedTransactions,
+        transactions: normalizedList,
       });
     } catch (err: any) {
       console.error("Erro no processamento do PDF:", err);
@@ -324,7 +292,6 @@ export default function ImportTransactions() {
         throw new Error("Selecione ao menos uma transação para importar.");
       }
 
-      // Garante que o payload envie a dataCompetencia no campo date
       const payload = selected.map((t) => {
         const competenceDate = t.dataCompetencia || t.date;
         return {
@@ -334,10 +301,10 @@ export default function ImportTransactions() {
           dataParcial: t.dataParcial,
           ano: t.ano || globalYear,
           mes: t.mes || globalMonth,
-          descricao: t.description, // Descrição completa sem truncamento
-          description: t.description,
-          valor: Number(t.amount),
-          amount: Number(t.amount),
+          descricao: t.description || t.descricao,
+          description: t.description || t.descricao,
+          valor: Number(t.amount !== undefined ? t.amount : t.valor),
+          amount: Number(t.amount !== undefined ? t.amount : t.valor),
           tipo: t.type === "income" ? "C" : "D",
           type: t.type,
           cartao: t.cartao || t.cardLabel,
@@ -392,7 +359,7 @@ export default function ImportTransactions() {
     if (!selectedFile) return;
     const ext = selectedFile.name.split(".").pop()?.toLowerCase();
 
-    if (ext === "pdf" || selectedBank === "caixa") {
+    if (ext === "pdf") {
       processPdfFile(selectedFile);
     } else {
       parseMutation.mutate({
@@ -479,7 +446,7 @@ export default function ImportTransactions() {
 
       if (searchQuery.trim()) {
         const q = searchQuery.toLowerCase();
-        const matchDesc = t.description.toLowerCase().includes(q);
+        const matchDesc = (t.description || t.descricao || "").toLowerCase().includes(q);
         const matchCat = (t.categoryName || "").toLowerCase().includes(q);
         const matchCard = (t.cardLabel || t.cartao || "").toLowerCase().includes(q);
         const matchDate = t.dataCompetencia ? t.dataCompetencia.includes(q) : t.date.includes(q);
@@ -514,7 +481,7 @@ export default function ImportTransactions() {
             Importar Extrato Bancário
           </h1>
           <p className="text-sm text-muted-foreground mt-1">
-            Importe extratos OFX/CSV ou faturas em PDF (Caixa, Nubank, Inter, etc.) com revisão manual antes de salvar.
+            Importe extratos OFX/CSV ou faturas em PDF (Caixa, Nubank, Inter, Itaú, Bradesco, Santander, BB, C6, etc.) com auto-detecção e revisão manual.
           </p>
         </div>
 
@@ -613,7 +580,7 @@ export default function ImportTransactions() {
                     </div>
                     <div>
                       <p className="font-semibold text-slate-800 text-sm">Clique para selecionar ou arraste o arquivo aqui</p>
-                      <p className="text-xs text-muted-foreground mt-1">OFX, CSV ou PDF de qualquer banco ou fatura</p>
+                      <p className="text-xs text-muted-foreground mt-1">OFX, CSV ou PDF (Caixa, Nubank, Inter, Itaú, Bradesco, etc.)</p>
                     </div>
                   </>
                 )}
@@ -655,7 +622,7 @@ export default function ImportTransactions() {
                   </SelectContent>
                 </Select>
                 <p className="text-[11px] text-muted-foreground">
-                  Selecione <strong>Caixa</strong> para faturas com vinculação de cartão e competência automática.
+                  Com <strong>Auto-detectar</strong>, o sistema reconhece automaticamente o formato do banco.
                 </p>
               </div>
 
@@ -687,7 +654,7 @@ export default function ImportTransactions() {
           <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-3">
             <div>
               <h2 className="text-lg font-black text-slate-900 flex items-center gap-2">
-                <FileCheck className="h-5 w-5 text-primary" /> Revisão do Extrato
+                <FileCheck className="h-5 w-5 text-primary" /> Revisão do Extrato: {previewData.summary?.bankName || "Fatura"}
               </h2>
               <p className="text-xs text-muted-foreground mt-0.5">
                 {previewData.filename} • {previewData.totalCount} lançamentos identificados
@@ -707,9 +674,9 @@ export default function ImportTransactions() {
               <div className="flex items-start gap-3">
                 <AlertTriangle className="h-5 w-5 text-amber-600 shrink-0 mt-0.5" />
                 <div>
-                  <h4 className="font-bold text-sm">Fatura com Revisão Manual Obrigatória</h4>
+                  <h4 className="font-bold text-sm">Fatura com Revisão Manual de Competência</h4>
                   <p className="text-xs text-amber-800 mt-0.5">
-                    Revise os lançamentos antes de salvar. Compras parceladas têm sua competência atribuída ao mês da fatura.
+                    Revise os lançamentos antes de salvar. Compras parceladas têm sua competência contábil atribuída ao mês da fatura.
                   </p>
                 </div>
               </div>
@@ -902,12 +869,12 @@ export default function ImportTransactions() {
                           </td>
                         )}
 
-                        {/* Descrição Completa Editável sem truncamento */}
+                        {/* Descrição Completa Editável */}
                         <td className="p-3">
                           {isManualReviewMode ? (
                             <Input
                               value={tx.description || tx.descricao || ""}
-                              title={tx.description}
+                              title={tx.description || tx.descricao || ""}
                               onChange={(e) => handleUpdateTransactionField(targetIdx, "description", e.target.value)}
                               className="h-8 text-xs font-medium bg-white border-slate-300 min-w-[260px]"
                             />
@@ -925,7 +892,7 @@ export default function ImportTransactions() {
                               type="number"
                               step="0.01"
                               min="0"
-                              value={tx.amount}
+                              value={tx.amount !== undefined ? tx.amount : tx.valor}
                               onChange={(e) =>
                                 handleUpdateTransactionField(targetIdx, "amount", parseFloat(e.target.value) || 0)
                               }
@@ -933,7 +900,7 @@ export default function ImportTransactions() {
                             />
                           ) : (
                             <span className={`font-bold ${tx.type === "income" ? "text-emerald-600" : "text-slate-900"}`}>
-                              {tx.amount.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
+                              {(tx.amount || 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
                             </span>
                           )}
                         </td>
