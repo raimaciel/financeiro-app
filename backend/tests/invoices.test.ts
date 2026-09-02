@@ -57,6 +57,41 @@ describe('GET /workspaces/:workspaceId/cards/:cardId/invoices', () => {
 	});
 });
 
+describe('GET /cards/:id/invoices', () => {
+	it('deve retornar 200 e array de faturas para o cartão informado', async () => {
+		const env = createEnvMock({
+			workspace_members: [memberRow],
+			credit_cards: [cardRow],
+		});
+		const tk = await token();
+		const req = new Request(`http://localhost/cards/${CARD_ID}/invoices`, {
+			headers: { Authorization: `Bearer ${tk}` },
+		});
+		const res = await app.fetch(req, env);
+		expect(res.status).toBe(200);
+		const data = (await res.json()) as any;
+		expect(Array.isArray(data)).toBe(true);
+		expect(data.length).toBeGreaterThan(0);
+		expect(data[0].card_id).toBe(CARD_ID);
+	});
+
+	it('deve retornar 200 e array vazio quando o cartão não tiver faturas ou não for encontrado', async () => {
+		const env = createEnvMock({
+			workspace_members: [],
+			credit_cards: [],
+		});
+		const tk = await token();
+		const req = new Request(`http://localhost/cards/cartao-inexistente/invoices`, {
+			headers: { Authorization: `Bearer ${tk}` },
+		});
+		const res = await app.fetch(req, env);
+		expect(res.status).toBe(200);
+		const data = (await res.json()) as any;
+		expect(Array.isArray(data)).toBe(true);
+		expect(data.length).toBe(0);
+	});
+});
+
 describe('Novos Endpoints de Fatura (Current, History, Forecast)', () => {
 	it('GET /workspaces/:id/credit-cards/:cardId/invoice/current - deve retornar fatura aberta e período', async () => {
 		const env = createEnvMock({

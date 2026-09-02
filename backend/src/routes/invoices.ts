@@ -277,31 +277,46 @@ invoicesRouter.get('/workspaces/:workspaceId/credit-cards/:cardId/invoice/foreca
 });
 
 // ------------------------------------------------------------------------------------------------
-// 4. GET /workspaces/:workspaceId/cards/:cardId/invoices - Legado/compatibilidade
+// 4. GET /cards/:id/invoices, GET /cards/:cardId/invoices & /workspaces/:workspaceId/cards/:cardId/invoices
 // ------------------------------------------------------------------------------------------------
-invoicesRouter.get('/workspaces/:workspaceId/cards/:cardId/invoices', async (c) => {
+const getCardInvoicesHandler = async (c: any) => {
 	try {
-		const workspaceId = c.req.param('workspaceId');
-		const cardId = c.req.param('cardId');
+		const cardId = c.req.param('id') || c.req.param('cardId');
+		const workspaceIdParam = c.req.param('workspaceId');
 		const userId = String(c.get('userId'));
 		const db = c.env.financeiro_db || (c.env as any).DB;
 
-		const role = await getWorkspaceMemberRole(db, workspaceId, userId);
-		if (!role) {
-			return c.json({ error: 'Acesso negado. Você não é membro deste workspace' }, 403);
+		// 1. Busca cartão e valida permissão de workspace
+		let card: any = null;
+		if (workspaceIdParam) {
+			const role = await getWorkspaceMemberRole(db, workspaceIdParam, userId);
+			if (!role) {
+				return c.json({ error: 'Acesso negado. Você não é membro deste workspace' }, 403);
+			}
+			card = await db
+				.prepare('SELECT id, workspace_id, name, brand, color, limit_amount, closing_day, due_day FROM credit_cards WHERE id = ? AND workspace_id = ?')
+				.bind(cardId, workspaceIdParam)
+				.first<any>();
+		} else {
+			card = await db
+				.prepare(`
+					SELECT c.id, c.workspace_id, c.name, c.brand, c.color, c.limit_amount, c.closing_day, c.due_day
+					FROM credit_cards c
+					INNER JOIN workspace_members wm ON wm.workspace_id = c.workspace_id
+					WHERE c.id = ? AND wm.user_id = ?
+				`)
+				.bind(cardId, userId)
+				.first<any>();
 		}
-
-		const card = await db
-			.prepare('SELECT id, name, brand, color, limit_amount, closing_day, due_day FROM credit_cards WHERE id = ? AND workspace_id = ?')
-			.bind(cardId, workspaceId)
-			.first<any>();
 
 		if (!card) {
-			return c.json({ error: 'Cartão de crédito não encontrado' }, 404);
+			// Se o cartão não for encontrado para o usuário, retorna array vazio com 200 OK
+			return c.json([]);
 		}
 
-		const closingDay = Number(card.closing_day);
-		const dueDay = Number(card.due_day);
+		const workspaceId = card.workspace_id;
+		const closingDay = Number(card.closing_day || 25);
+		const dueDay = Number(card.due_day || 5);
 		const now = new Date();
 
 		const { results: cardTransactions } = await db
@@ -377,7 +392,12 @@ invoicesRouter.get('/workspaces/:workspaceId/cards/:cardId/invoices', async (c) 
 		console.error('Erro ao listar faturas:', err);
 		return c.json({ error: 'Erro ao listar faturas do cartão' }, 500);
 	}
-});
+};
+
+invoicesRouter.get('/cards/:id/invoices', getCardInvoicesHandler);
+invoicesRouter.get('/cards/:cardId/invoices', getCardInvoicesHandler);
+invoicesRouter.get('/workspaces/:workspaceId/cards/:cardId/invoices', getCardInvoicesHandler);
+invoicesRouter.get('/workspaces/:workspaceId/credit-cards/:cardId/invoices', getCardInvoicesHandler);
 
 // ------------------------------------------------------------------------------------------------
 // 5. GET /invoices/:id & /workspaces/:workspaceId/invoices/:id - Detalhes da fatura com transações
