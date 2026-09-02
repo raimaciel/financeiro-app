@@ -852,6 +852,31 @@ Permitir que os administradores editem o nome completo, status de ativação da 
 ### Pendências
 - Nenhuma pendência.
 
+---
+
+## 21. [2026-09-02 08:41] - Correção do Header de Autorização `Bearer ${token}` em `api.ts`
+
+### O que foi feito
+1. **Diagnóstico da Causa Raiz**:
+   - No arquivo `frontend/src/lib/api.ts` (linha 10), o interceptor de requisições do Axios continha `config.headers.Authorization = Bearer ;` (sem aspas/crases e sem a variável `${token}`).
+   - Ao executar qualquer chamada autenticada após login, o JavaScript tentava resolver `Bearer` como um identificador não declarado, gerando `ReferenceError: Bearer is not defined`.
+2. **Correções Aplicadas**:
+   - Corrigida a linha 10 para `config.headers.Authorization = \`Bearer \${token}\`;`.
+   - Varredura em todo o código-fonte confirmou que não existem outras ocorrências de sintaxe incorreta de autenticação.
+3. **Validação e Deploy**:
+   - **60 testes do frontend passando (100%) em 13 arquivos**.
+   - Build de produção gerado com sucesso via `npm run build`.
+   - Deploy publicado no Cloudflare Pages: `https://financeiro-app-6wf.pages.dev` e preview `https://45726215.financeiro-app-6wf.pages.dev`.
+   - Commit enviado para o GitHub: `8ca7dac`.
+
+### Arquivos modificados
+- `frontend/src/lib/api.ts`: Correção da interpolação do token JWT no header de autorização.
+- `backend/PROGRESSO.md` e `PROGRESSO.md`: Registro da resolução.
+
+### Pendências
+- Nenhuma pendência.
+
+
 
 
 
