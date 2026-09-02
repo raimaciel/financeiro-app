@@ -14,7 +14,7 @@ import {
   parseTransactionsFromText,
   detectReferenceYear,
 } from "@/utils/pdfParser";
-import { extractTransactions as extractCaixaTransactions } from "@/utils/caixaInvoiceParser";
+import { extractTransactions as extractCaixaTransactions, detectInvoiceReference } from "@/utils/caixaInvoiceParser";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -62,6 +62,7 @@ import {
   Users,
   Check,
   RotateCcw,
+  Info,
 } from "lucide-react";
 
 const BANK_OPTIONS = [
@@ -75,6 +76,21 @@ const BANK_OPTIONS = [
   { id: "bb", name: "Banco do Brasil" },
   { id: "c6", name: "C6 Bank" },
   { id: "generic", name: "Extrato Genérico (Data, Descrição, Valor)" },
+];
+
+const MONTHS_LIST = [
+  { value: 1, label: "01 - Janeiro" },
+  { value: 2, label: "02 - Fevereiro" },
+  { value: 3, label: "03 - Março" },
+  { value: 4, label: "04 - Abril" },
+  { value: 5, label: "05 - Maio" },
+  { value: 6, label: "06 - Junho" },
+  { value: 7, label: "07 - Julho" },
+  { value: 8, label: "08 - Agosto" },
+  { value: 9, label: "09 - Setembro" },
+  { value: 10, label: "10 - Outubro" },
+  { value: 11, label: "11 - Novembro" },
+  { value: 12, label: "12 - Dezembro" },
 ];
 
 export default function ImportTransactions() {
@@ -97,11 +113,11 @@ export default function ImportTransactions() {
   const [transactions, setTransactions] = useState<ImportedTransaction[]>([]);
   const [activeTabFilter, setActiveTabFilter] = useState<"all" | "selected" | "duplicates" | "income" | "expense">("all");
   const [searchQuery, setSearchQuery] = useState("");
-  const [groupByCardView, setGroupByCardView] = useState(true);
 
   // Modo de revisão manual (ex: Caixa)
   const [isManualReviewMode, setIsManualReviewMode] = useState(false);
   const [globalYear, setGlobalYear] = useState<number>(() => new Date().getFullYear());
+  const [globalMonth, setGlobalMonth] = useState<number>(() => new Date().getMonth() + 1);
 
   // Modais de confirmação e status
   const [isConfirmModalOpen, setIsConfirmModalOpen] = useState(false);
@@ -188,6 +204,35 @@ export default function ImportTransactions() {
     return null;
   };
 
+  // Helper para vincular cartão automaticamente pelos últimos 4 dígitos (Bug 3)
+  const matchCreditCardByDigits = (cardDigits: string | null | undefined, cardLabelText: string = "") => {
+    if (!cardDigits && !cardLabelText) return { creditCardId: null, isIdentified: false, matchedLabel: cardLabelText };
+
+    const digits = cardDigits || (cardLabelText.match(/\d{4}/)?.[0] ?? null);
+
+    if (digits && creditCards.length > 0) {
+      const matched = creditCards.find((c) => {
+        if (c.last_four_digits && c.last_four_digits.trim() === digits) return true;
+        if (c.name && c.name.includes(digits)) return true;
+        return false;
+      });
+
+      if (matched) {
+        return {
+          creditCardId: matched.id,
+          isIdentified: true,
+          matchedLabel: `${matched.name}${matched.last_four_digits ? ` (•••• ${matched.last_four_digits})` : ""}`,
+        };
+      }
+    }
+
+    return {
+      creditCardId: selectedCreditCardId !== "none" ? selectedCreditCardId : null,
+      isIdentified: selectedCreditCardId !== "none",
+      matchedLabel: cardLabelText || "Cartão não identificado",
+    };
+  };
+
   // Processamento de Arquivo PDF no Frontend com suporte a Caixa / Revisão Manual
   const processPdfFile = async (file: File) => {
     setIsParsingPdf(true);
@@ -202,45 +247,72 @@ export default function ImportTransactions() {
       const isCaixaDetected = /caixa\s+econ[oô]mica/i.test(text) || (/\(cart[aã]o\s+\d+\)/i.test(text) && !detectReferenceYear(text));
 
       if (isCaixaSelected || isCaixaDetected) {
-        let caixaItems = [];
+        let caixaItems: any[] = [];
+        let invoiceRef: any = {};
+
         try {
           const previewRes = await api.post("/api/import/preview", {
             pdfText: text,
             workspaceId: selectedWorkspaceId,
           });
           caixaItems = previewRes.data.transactions || [];
+          invoiceRef = {
+            ano: previewRes.data.anoFatura,
+            mes: previewRes.data.mesFatura,
+            mesReferencia: previewRes.data.mesReferenciaFatura,
+          };
         } catch {
           caixaItems = extractCaixaTransactions(text);
+          invoiceRef = detectInvoiceReference(text);
         }
 
         if (caixaItems.length === 0) {
           throw new Error("Nenhuma transação identificada no formato de fatura Caixa. Verifique o arquivo.");
         }
 
-        const currentYear = new Date().getFullYear();
-        setGlobalYear(currentYear);
+        const effectiveYear = invoiceRef.ano || new Date().getFullYear();
+        const effectiveMonth = invoiceRef.mes || new Date().getMonth() + 1;
+        setGlobalYear(effectiveYear);
+        setGlobalMonth(effectiveMonth);
 
         const mappedTransactions: ImportedTransaction[] = caixaItems.map((it: any, index: number) => {
           const type: "income" | "expense" = it.tipo === "C" ? "income" : "expense";
-          const cat = suggestCategory(it.descricao || it.description, type);
+          const fullDescription = it.descricao || it.description; // Preservação integral (Bug 1)
+          const cat = suggestCategory(fullDescription, type);
+
+          // Bug 3: Vinculação de cartão existente
+          const cardMatch = matchCreditCardByDigits(it.cartaoDigitos, it.cartao || it.cardLabel);
+          const finalCreditCardId = it.creditCardId || cardMatch.creditCardId;
+          const isIdentified = it.cartaoIdentificado !== undefined ? it.cartaoIdentificado : cardMatch.isIdentified;
+
+          // Bug 2: Data de competência da fatura
+          const dataTransacao = it.dataTransacao || it.dataParcial || "01/01";
+          const [dd] = dataTransacao.split("/");
+          const dataCompetencia = it.dataCompetencia || `${effectiveYear}-${String(effectiveMonth).padStart(2, "0")}-${dd.padStart(2, "0")}`;
 
           return {
             id: it.id || `caixa-${index}-${Date.now()}`,
             tempId: `caixa-${index}`,
-            date: `${currentYear}-${it.dataParcial.split("/")[1]}-${it.dataParcial.split("/")[0]}`,
-            dataParcial: it.dataParcial,
-            ano: currentYear,
+            date: dataCompetencia,
+            dataTransacao,
+            dataParcial: dataTransacao,
+            dataCompetencia,
+            ano: effectiveYear,
+            mes: effectiveMonth,
+            mesReferenciaFatura: invoiceRef.mesReferencia,
             precisaRevisao: true,
-            description: it.descricao || it.description,
-            cleanDescription: it.descricao || it.description,
+            description: fullDescription,
+            cleanDescription: fullDescription,
             amount: it.valor || it.amount,
             type,
             tipo: it.tipo || (type === "income" ? "C" : "D"),
-            cartao: it.cartao || "Cartão Caixa",
-            cardLabel: it.cartao || "Cartão Caixa",
+            cartao: cardMatch.matchedLabel,
+            cardLabel: cardMatch.matchedLabel,
+            cartaoDigitos: it.cartaoDigitos,
+            cartaoIdentificado: isIdentified,
+            creditCardId: finalCreditCardId,
             categoryId: cat?.id || it.categoryId || null,
             categoryName: cat?.name || it.categoryName || null,
-            creditCardId: selectedCreditCardId !== "none" ? selectedCreditCardId : null,
             selected: true,
           };
         });
@@ -275,20 +347,23 @@ export default function ImportTransactions() {
       const mappedTransactions: ImportedTransaction[] = parsedItems.map((it, index) => {
         const type: "income" | "expense" = it.amount > 0 ? "income" : "expense";
         const cat = suggestCategory(it.description, type);
+        const cardMatch = matchCreditCardByDigits(it.cardLast4, it.cardLabel);
 
         return {
           id: `pdf-${index}-${Date.now()}`,
           tempId: `pdf-${index}`,
           date: it.date,
+          dataCompetencia: it.date,
           description: it.description,
           cleanDescription: it.description,
           amount: Math.abs(it.amount),
           type,
           categoryId: cat?.id || null,
           categoryName: cat?.name || null,
-          creditCardId: selectedCreditCardId !== "none" ? selectedCreditCardId : null,
+          creditCardId: cardMatch.creditCardId || (selectedCreditCardId !== "none" ? selectedCreditCardId : null),
           cardLast4: it.cardLast4,
-          cardLabel: it.cardLabel,
+          cardLabel: cardMatch.matchedLabel,
+          cartaoIdentificado: cardMatch.isIdentified,
           installments: it.installments || 1,
           installmentCurrent: it.installmentCurrent || 1,
           selected: true,
@@ -354,22 +429,26 @@ export default function ImportTransactions() {
       if (isManualReviewMode) {
         const payload = selected.map((t) => {
           const year = t.ano || globalYear;
-          const [dd, mm] = (t.dataParcial || t.date.slice(5)).split("/");
-          const isoDate = t.dataParcial ? `${year}-${mm}-${dd}` : t.date;
+          const month = t.mes || globalMonth;
+          const day = (t.dataTransacao || t.dataParcial || "01/01").split("/")[0].padStart(2, "0");
+          const competenceDate = t.dataCompetencia || `${year}-${String(month).padStart(2, "0")}-${day}`;
 
           return {
-            date: isoDate,
+            date: competenceDate,
+            dataCompetencia: competenceDate,
+            dataTransacao: t.dataTransacao,
             dataParcial: t.dataParcial,
             ano: year,
-            descricao: t.description,
+            mes: month,
+            descricao: t.description, // Descrição completa sem truncamento (Bug 1)
             description: t.description,
             valor: Number(t.amount),
             amount: Number(t.amount),
             tipo: t.type === "income" ? "C" : "D",
             type: t.type,
             cartao: t.cartao || t.cardLabel,
+            creditCardId: t.creditCardId || null, // Vinculação com cartão do workspace (Bug 3)
             categoryId: t.categoryId || null,
-            creditCardId: t.creditCardId || (selectedCreditCardId !== "none" ? selectedCreditCardId : null),
           };
         });
 
@@ -470,6 +549,23 @@ export default function ImportTransactions() {
     });
   };
 
+  const handleUpdateCard = (index: number, cardId: string) => {
+    const selected = creditCards.find((c) => c.id === cardId);
+    setTransactions((prev) => {
+      const copy = [...prev];
+      if (cardId === "none" || !selected) {
+        copy[index].creditCardId = null;
+        copy[index].cartaoIdentificado = false;
+      } else {
+        copy[index].creditCardId = selected.id;
+        copy[index].cartao = `${selected.name}${selected.last_four_digits ? ` (•••• ${selected.last_four_digits})` : ""}`;
+        copy[index].cardLabel = copy[index].cartao;
+        copy[index].cartaoIdentificado = true;
+      }
+      return copy;
+    });
+  };
+
   const handleUpdateTransactionField = (index: number, field: string, value: any) => {
     setTransactions((prev) => {
       const copy = [...prev];
@@ -478,14 +574,21 @@ export default function ImportTransactions() {
     });
   };
 
-  const handleApplyYearToAll = () => {
+  // Aplica competência (Mês e Ano) a todas as linhas da tabela
+  const handleApplyCompetenceToAll = () => {
     if (!globalYear || isNaN(globalYear) || globalYear < 1970 || globalYear > 2100) return;
     setTransactions((prev) =>
-      prev.map((t) => ({
-        ...t,
-        ano: globalYear,
-        date: t.dataParcial ? `${globalYear}-${t.dataParcial.split("/")[1]}-${t.dataParcial.split("/")[0]}` : t.date,
-      }))
+      prev.map((t) => {
+        const day = (t.dataTransacao || t.dataParcial || "01/01").split("/")[0].padStart(2, "0");
+        const newCompetenceDate = `${globalYear}-${String(globalMonth).padStart(2, "0")}-${day}`;
+        return {
+          ...t,
+          ano: globalYear,
+          mes: globalMonth,
+          date: newCompetenceDate,
+          dataCompetencia: newCompetenceDate,
+        };
+      })
     );
   };
 
@@ -501,7 +604,7 @@ export default function ImportTransactions() {
         const matchDesc = t.description.toLowerCase().includes(q);
         const matchCat = (t.categoryName || "").toLowerCase().includes(q);
         const matchCard = (t.cardLabel || t.cartao || "").toLowerCase().includes(q);
-        const matchDate = t.dataParcial ? t.dataParcial.includes(q) : t.date.includes(q);
+        const matchDate = t.dataCompetencia ? t.dataCompetencia.includes(q) : t.date.includes(q);
         if (!matchDesc && !matchCat && !matchCard && !matchDate) return false;
       }
 
@@ -509,7 +612,6 @@ export default function ImportTransactions() {
     });
   }, [transactions, activeTabFilter, searchQuery]);
 
-  // Agrupamento por cartão para fatura em PDF
   const cardGroups = useMemo(() => {
     const groups: Record<string, ImportedTransaction[]> = {};
     for (const tx of filteredTransactions) {
@@ -676,12 +778,12 @@ export default function ImportTransactions() {
                   </SelectContent>
                 </Select>
                 <p className="text-[11px] text-muted-foreground">
-                  Selecione <strong>Caixa</strong> para faturas com revisão manual de ano e cartão.
+                  Selecione <strong>Caixa</strong> para faturas com vinculação de cartão e competência automática.
                 </p>
               </div>
 
               <div className="space-y-1.5">
-                <Label htmlFor="card-select" className="font-bold text-slate-700">Conta / Cartão de Destino</Label>
+                <Label htmlFor="card-select" className="font-bold text-slate-700">Associar a Cartão de Crédito:</Label>
                 <Select value={selectedCreditCardId} onValueChange={setSelectedCreditCardId}>
                   <SelectTrigger id="card-select" className="bg-white">
                     <SelectValue />
@@ -711,7 +813,7 @@ export default function ImportTransactions() {
                 <FileCheck className="h-5 w-5 text-primary" /> Revisão do Extrato
               </h2>
               <p className="text-xs text-muted-foreground mt-0.5">
-                {previewData.filename} • {previewData.totalCount} transações identificadas
+                {previewData.filename} • {previewData.totalCount} lançamentos identificados
               </p>
             </div>
 
@@ -722,7 +824,7 @@ export default function ImportTransactions() {
             )}
           </div>
 
-          {/* Banner de Revisão Manual (Ex: Fatura Caixa sem ano) */}
+          {/* Banner de Revisão Manual com Competência da Fatura (Bug 2) */}
           {isManualReviewMode && (
             <div className="p-4 rounded-xl bg-amber-50/90 border border-amber-200 text-amber-900 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-4">
               <div className="flex items-start gap-3">
@@ -730,32 +832,56 @@ export default function ImportTransactions() {
                 <div>
                   <h4 className="font-bold text-sm">Fatura com Revisão Manual Obrigatória</h4>
                   <p className="text-xs text-amber-800 mt-0.5">
-                    O arquivo da Caixa não contém o ano das compras (apenas DD/MM). Defina o ano e revise os campos antes de confirmar para salvar no banco.
+                    Revise os lançamentos antes de salvar. Compras parceladas têm sua competência atribuída ao mês da fatura.
                   </p>
                 </div>
               </div>
 
-              {/* Ferramenta de Ano Global */}
-              <div className="flex items-center gap-2 shrink-0 bg-white/80 p-2 rounded-lg border border-amber-200">
-                <Label htmlFor="global-year-input" className="text-xs font-bold text-slate-700">
-                  Ano padrão:
-                </Label>
-                <Input
-                  id="global-year-input"
-                  type="number"
-                  min={1970}
-                  max={2100}
-                  value={globalYear}
-                  onChange={(e) => setGlobalYear(parseInt(e.target.value, 10) || new Date().getFullYear())}
-                  className="h-8 w-24 text-xs font-bold bg-white"
-                />
+              {/* Ferramenta de Competência Global (Mês e Ano da Fatura) */}
+              <div className="flex items-center gap-2 shrink-0 bg-white/90 p-2 rounded-lg border border-amber-200 flex-wrap sm:flex-nowrap">
+                <div className="flex items-center gap-1.5">
+                  <Label htmlFor="global-month-select" className="text-xs font-bold text-slate-700 whitespace-nowrap">
+                    Competência:
+                  </Label>
+                  <Select
+                    value={String(globalMonth)}
+                    onValueChange={(val) => setGlobalMonth(parseInt(val, 10))}
+                  >
+                    <SelectTrigger id="global-month-select" className="h-8 w-36 text-xs font-bold bg-white">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {MONTHS_LIST.map((m) => (
+                        <SelectItem key={m.value} value={String(m.value)} className="text-xs">
+                          {m.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="flex items-center gap-1.5">
+                  <Label htmlFor="global-year-input" className="text-xs font-bold text-slate-700 whitespace-nowrap">
+                    Ano:
+                  </Label>
+                  <Input
+                    id="global-year-input"
+                    type="number"
+                    min={1970}
+                    max={2100}
+                    value={globalYear}
+                    onChange={(e) => setGlobalYear(parseInt(e.target.value, 10) || new Date().getFullYear())}
+                    className="h-8 w-20 text-xs font-bold bg-white"
+                  />
+                </div>
+
                 <Button
                   type="button"
                   size="sm"
                   variant="outline"
-                  onClick={handleApplyYearToAll}
-                  className="h-8 text-xs font-semibold bg-white"
-                  title="Aplica este ano a todas as linhas da tabela"
+                  onClick={handleApplyCompetenceToAll}
+                  className="h-8 text-xs font-semibold bg-white shrink-0"
+                  title="Aplica este mês e ano de competência a todas as linhas da tabela"
                 >
                   Aplicar a todos
                 </Button>
@@ -831,13 +957,13 @@ export default function ImportTransactions() {
                         className="rounded border-slate-300 text-primary focus:ring-primary h-4 w-4 cursor-pointer"
                       />
                     </th>
-                    <th className="p-3 w-28">Data</th>
-                    {isManualReviewMode && <th className="p-3 w-24">Ano</th>}
-                    <th className="p-3 min-w-[220px]">Descrição</th>
-                    <th className="p-3 w-32">Valor (R$)</th>
+                    <th className="p-3 w-36">Competência (Data)</th>
+                    {isManualReviewMode && <th className="p-3 w-20">Ano</th>}
+                    <th className="p-3 min-w-[280px]">Descrição Completa</th>
+                    <th className="p-3 w-28">Valor (R$)</th>
                     <th className="p-3 w-28">Tipo</th>
-                    <th className="p-3 min-w-[150px]">Cartão</th>
-                    <th className="p-3 min-w-[180px]">Categoria</th>
+                    <th className="p-3 min-w-[200px]">Cartão Vinculado</th>
+                    <th className="p-3 min-w-[170px]">Categoria</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
@@ -862,12 +988,19 @@ export default function ImportTransactions() {
                           />
                         </td>
 
-                        {/* Data Parcial (Readonly) */}
+                        {/* Competência e Data Original (Bug 2) */}
                         <td className="p-3 whitespace-nowrap">
-                          <Badge variant="outline" className="font-mono text-xs font-bold bg-slate-50">
-                            <Calendar className="h-3 w-3 mr-1 text-slate-500" />
-                            {tx.dataParcial || tx.date}
-                          </Badge>
+                          <div className="flex flex-col gap-0.5">
+                            <Badge variant="outline" className="font-mono text-xs font-bold bg-slate-50 w-fit">
+                              <Calendar className="h-3 w-3 mr-1 text-slate-500" />
+                              {tx.dataCompetencia || tx.date}
+                            </Badge>
+                            {tx.dataTransacao && tx.dataTransacao !== (tx.dataCompetencia ? tx.dataCompetencia.slice(5).split("-").reverse().join("/") : "") && (
+                              <span className="text-[10px] text-amber-700 font-medium flex items-center gap-1" title="Data original em que a compra parcelada foi realizada">
+                                📅 Compra: {tx.dataTransacao}
+                              </span>
+                            )}
+                          </div>
                         </td>
 
                         {/* Campo ANO Editável (se modo manual) */}
@@ -878,24 +1011,33 @@ export default function ImportTransactions() {
                               min={1970}
                               max={2100}
                               value={tx.ano || globalYear}
-                              onChange={(e) =>
-                                handleUpdateTransactionField(targetIdx, "ano", parseInt(e.target.value, 10) || globalYear)
-                              }
+                              onChange={(e) => {
+                                const newYear = parseInt(e.target.value, 10) || globalYear;
+                                handleUpdateTransactionField(targetIdx, "ano", newYear);
+                                const day = (tx.dataTransacao || tx.dataParcial || "01/01").split("/")[0].padStart(2, "0");
+                                const month = String(tx.mes || globalMonth).padStart(2, "0");
+                                const newDate = `${newYear}-${month}-${day}`;
+                                handleUpdateTransactionField(targetIdx, "dataCompetencia", newDate);
+                                handleUpdateTransactionField(targetIdx, "date", newDate);
+                              }}
                               className="h-8 w-20 text-xs font-bold text-center bg-white border-slate-300"
                             />
                           </td>
                         )}
 
-                        {/* Descrição Editável */}
+                        {/* Descrição Completa Editável sem truncamento (Bug 1) */}
                         <td className="p-3">
                           {isManualReviewMode ? (
                             <Input
                               value={tx.description}
+                              title={tx.description}
                               onChange={(e) => handleUpdateTransactionField(targetIdx, "description", e.target.value)}
-                              className="h-8 text-xs font-medium bg-white border-slate-300"
+                              className="h-8 text-xs font-medium bg-white border-slate-300 min-w-[260px]"
                             />
                           ) : (
-                            <span className="font-semibold text-slate-800">{tx.description}</span>
+                            <span className="font-semibold text-slate-800 block truncate max-w-xs" title={tx.description}>
+                              {tx.description}
+                            </span>
                           )}
                         </td>
 
@@ -944,17 +1086,43 @@ export default function ImportTransactions() {
                           )}
                         </td>
 
-                        {/* Cartão */}
+                        {/* Cartão Vinculado - SELECT com cartões cadastrados (Bug 3) */}
                         <td className="p-3">
-                          {isManualReviewMode ? (
-                            <Input
-                              value={tx.cartao || tx.cardLabel || "Cartão"}
-                              onChange={(e) => {
-                                handleUpdateTransactionField(targetIdx, "cartao", e.target.value);
-                                handleUpdateTransactionField(targetIdx, "cardLabel", e.target.value);
-                              }}
-                              className="h-8 text-xs bg-white border-slate-300"
-                            />
+                          {creditCards.length > 0 ? (
+                            <div className="space-y-1">
+                              <Select
+                                value={tx.creditCardId || "none"}
+                                onValueChange={(val) => handleUpdateCard(targetIdx, val)}
+                              >
+                                <SelectTrigger
+                                  className={`h-8 text-xs font-semibold bg-white ${
+                                    !tx.creditCardId ? "border-amber-400 bg-amber-50/30 text-amber-900" : "border-slate-300"
+                                  }`}
+                                >
+                                  <SelectValue placeholder="Selecione o cartão..." />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="none" className="text-amber-800 font-semibold">
+                                    ⚠️ Selecionar Cartão...
+                                  </SelectItem>
+                                  {creditCards.map((c) => (
+                                    <SelectItem key={c.id} value={c.id}>
+                                      {c.name} {c.last_four_digits ? `(•••• ${c.last_four_digits})` : ""}
+                                    </SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+
+                              {tx.cartaoIdentificado ? (
+                                <span className="text-[10px] text-emerald-700 font-bold flex items-center gap-1">
+                                  <Check className="h-3 w-3" /> Vinculado automaticamente
+                                </span>
+                              ) : (
+                                <span className="text-[10px] text-amber-700 font-medium flex items-center gap-1">
+                                  ⚠️ Cartão não identificado no PDF
+                                </span>
+                              )}
+                            </div>
                           ) : (
                             <span className="text-slate-600 font-medium">
                               {tx.cardLabel || (tx.cardLast4 ? `•••• ${tx.cardLast4}` : "Conta")}
@@ -968,7 +1136,7 @@ export default function ImportTransactions() {
                             value={tx.categoryId ? String(tx.categoryId) : "none"}
                             onValueChange={(val) => handleUpdateCategory(targetIdx, val)}
                           >
-                            <SelectTrigger className="h-8 text-xs bg-white">
+                            <SelectTrigger className="h-8 text-xs bg-white border-slate-300">
                               <SelectValue placeholder="Selecione categoria" />
                             </SelectTrigger>
                             <SelectContent>
@@ -1012,8 +1180,8 @@ export default function ImportTransactions() {
             </div>
             {isManualReviewMode && (
               <div className="flex justify-between">
-                <span className="text-muted-foreground">Ano de referência aplicado:</span>
-                <strong className="font-bold">{globalYear}</strong>
+                <span className="text-muted-foreground">Competência aplicada:</span>
+                <strong className="font-bold">{String(globalMonth).padStart(2, "0")}/{globalYear}</strong>
               </div>
             )}
             <div className="flex justify-between">

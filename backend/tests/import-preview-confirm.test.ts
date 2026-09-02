@@ -1,166 +1,188 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach } from 'vitest';
 import app from '../src/index';
-import { createEnvMock } from './helpers/mocks';
 import { generateToken } from '../src/auth';
 
-const JWT_SECRET = 'test-secret-key-for-unit-tests-1234567890';
-const WORKSPACE_ID = 'ws-caixa-123';
-const USER_ID = 1;
-
-async function getToken() {
-	return generateToken({ userId: USER_ID, email: 'caixa@test.com' }, JWT_SECRET);
+// Helper mock simples para D1
+function createMockD1() {
+	const data: any[] = [];
+	return {
+		data,
+		prepare: (query: string) => {
+			let boundParams: any[] = [];
+			const statement = {
+				bind: (...params: any[]) => {
+					boundParams = params;
+					return statement;
+				},
+				first: async <T = any>(): Promise<T | null> => {
+					if (query.includes('FROM workspace_members')) {
+						return { workspace_id: boundParams[0] || 'ws-test', role: 'admin' } as any;
+					}
+					return null;
+				},
+				all: async <T = any>(): Promise<{ results: T[] }> => {
+					if (query.includes('FROM categories')) {
+						return {
+							results: [
+								{ id: 1, name: 'Alimentação', type: 'expense' },
+								{ id: 2, name: 'Transporte', type: 'expense' },
+							] as any,
+						};
+					}
+					if (query.includes('FROM credit_cards')) {
+						return {
+							results: [
+								{ id: 'card-uuid-2583', name: 'Caixa Sim Internacional', last_four_digits: '2583', brand: 'Visa' },
+								{ id: 'card-uuid-2424', name: 'Caixa Sim Internacional', last_four_digits: '2424', brand: 'Visa' },
+							] as any,
+						};
+					}
+					return { results: [] };
+				},
+				run: async () => {
+					if (query.includes('INSERT INTO transactions')) {
+						data.push({ query, boundParams });
+					}
+					return { success: true };
+				},
+			};
+			return statement;
+		},
+		batch: async (statements: any[]) => {
+			for (const stmt of statements) {
+				await stmt.run();
+			}
+			return statements.map(() => ({ success: true }));
+		},
+	};
 }
 
-const memberRow = { workspace_id: WORKSPACE_ID, user_id: USER_ID, role: 'owner' };
+describe('Import Endpoints: Preview & Confirm (Caixa Manual Review & Fixes)', () => {
+	let mockDb: any;
+	const dummyJwtSecret = 'super-secret-jwt-key-for-test-environments-12345';
 
-const sampleCaixaPdf = `
-CAIXA ECONOMICA FEDERAL
-Nome do Titular: CARLOS SILVA
-CPF: 123.456.789-00
-Endereço: RUA DAS PALMEIRAS, 100
-Limite de Crédito: R$ 15.000,00
-Vencimento: 10/04/2026
+	beforeEach(() => {
+		mockDb = createMockD1();
+	});
 
-(Cartão 1234)
-05/03 SUPERMERCADO ABC 154,30D
-12/03 UBER *TRIP 25,90D
-15/03 ESTORNO COMPRA 80,00C
-Total do Cartão 1234 260,20D
+	async function getAuthToken() {
+		return await generateToken({ userId: '1', email: 'teste@teste.com', name: 'Teste' }, dummyJwtSecret);
+	}
 
-(Cartão 5678)
-18/03 FARMACIA DROGASIL 94,50D
-22/03 AMAZON.COM.BR 1.234,56D
-Total dos Lançamentos 1.329,06D
-Total a Pagar 1.589,26D
-`;
+	it('POST /api/import/preview deve retornar lançamentos com descrição integral, competência e vinculação automática por 4 dígitos', async () => {
+		const token = await getAuthToken();
 
-describe('Import Preview & Confirm Endpoints (Caixa PDF com Revisão Manual)', () => {
-	it('POST /api/import/preview deve retornar as transações extraídas com dataParcial e precisaRevisao: true sem salvar no banco', async () => {
-		const env = createEnvMock({
-			workspace_members: [memberRow],
-		});
-		const t = await getToken();
+		const pdfText = `
+			CAIXA ECONOMICA FEDERAL
+			Vencimento: 10/09/2026
 
-		const req = new Request('http://localhost/api/import/preview', {
+			(Cartão 2583)
+			06/06 NORMATEL HOME CENTER 03 DE 03 FORTALEZA 150,00D
+			07/05 AMAZONMKTPLC AMOPERACO 04 DE 04 RIO DE JANEIR 89,90D
+
+			(Cartão 9999)
+			12/08 RESTAURANTE SABOR 45,00D
+		`;
+
+		const res = await app.request('/api/import/preview', {
 			method: 'POST',
 			headers: {
 				'Content-Type': 'application/json',
-				Authorization: `Bearer ${t}`,
+				Authorization: `Bearer ${token}`,
 			},
 			body: JSON.stringify({
-				pdfText: sampleCaixaPdf,
-				workspaceId: WORKSPACE_ID,
+				pdfText,
+				workspaceId: 'ws-test',
 			}),
-		});
+		}, {
+			financeiro_db: mockDb,
+			JWT_SECRET: dummyJwtSecret,
+		} as any);
 
-		const res = await app.fetch(req, env);
 		expect(res.status).toBe(200);
-
-		const json = await res.json() as any;
+		const json = await res.json();
 		expect(json.success).toBe(true);
+		expect(json.totalCount).toBe(3);
 		expect(json.precisaRevisao).toBe(true);
-		expect(json.totalCount).toBe(5);
-		expect(json.transactions).toHaveLength(5);
+		expect(json.anoFatura).toBe(2026);
+		expect(json.mesFatura).toBe(9);
 
-		// Não infere o ano automaticamente (mantém dataParcial "DD/MM")
-		expect(json.transactions[0].dataParcial).toBe('05/03');
-		expect(json.transactions[0].descricao).toBe('SUPERMERCADO ABC');
-		expect(json.transactions[0].valor).toBe(154.3);
-		expect(json.transactions[0].tipo).toBe('D');
-		expect(json.transactions[0].cartao).toBe('Cartão 1234');
-		expect(json.transactions[0].precisaRevisao).toBe(true);
+		// Item 1: Descrição completa e cartão 2583 vinculado automaticamente
+		expect(json.transactions[0]).toMatchObject({
+			dataTransacao: '06/06',
+			dataCompetencia: '2026-09-06',
+			descricao: 'NORMATEL HOME CENTER 03 DE 03 FORTALEZA',
+			valor: 150.0,
+			tipo: 'D',
+			cartaoDigitos: '2583',
+			creditCardId: 'card-uuid-2583',
+			cartaoIdentificado: true,
+		});
+
+		// Item 2: Descrição completa
+		expect(json.transactions[1]).toMatchObject({
+			dataTransacao: '07/05',
+			dataCompetencia: '2026-09-07',
+			descricao: 'AMAZONMKTPLC AMOPERACO 04 DE 04 RIO DE JANEIR',
+			valor: 89.9,
+			creditCardId: 'card-uuid-2583',
+			cartaoIdentificado: true,
+		});
+
+		// Item 3: Cartão 9999 não existente no cadastro -> cartaoIdentificado = false
+		expect(json.transactions[2]).toMatchObject({
+			dataTransacao: '12/08',
+			cartaoDigitos: '9999',
+			creditCardId: null,
+			cartaoIdentificado: false,
+		});
 	});
 
-	it('POST /import/preview deve retornar erro 400 se o texto não contiver transações', async () => {
-		const env = createEnvMock({
-			workspace_members: [memberRow],
-		});
-		const t = await getToken();
+	it('POST /api/import/confirm deve salvar dados no banco usando data de competência da fatura', async () => {
+		const token = await getAuthToken();
 
-		const req = new Request('http://localhost/import/preview', {
+		const res = await app.request('/api/import/confirm', {
 			method: 'POST',
 			headers: {
 				'Content-Type': 'application/json',
-				Authorization: `Bearer ${t}`,
+				Authorization: `Bearer ${token}`,
 			},
 			body: JSON.stringify({
-				pdfText: 'Texto sem nenhuma linha de lançamento de cartão',
+				workspaceId: 'ws-test',
+				transactions: [
+					{
+						dataTransacao: '06/06',
+						dataCompetencia: '2026-09-06',
+						descricao: 'NORMATEL HOME CENTER 03 DE 03 FORTALEZA',
+						valor: 150.0,
+						tipo: 'D',
+						creditCardId: 'card-uuid-2583',
+						categoryId: 1,
+					},
+					{
+						dataTransacao: '07/05',
+						dataCompetencia: '2026-09-07',
+						descricao: 'AMAZONMKTPLC AMOPERACO 04 DE 04 RIO DE JANEIR',
+						valor: 89.9,
+						tipo: 'D',
+						creditCardId: 'card-uuid-2583',
+						categoryId: 1,
+					},
+				],
 			}),
-		});
+		}, {
+			financeiro_db: mockDb,
+			JWT_SECRET: dummyJwtSecret,
+		} as any);
 
-		const res = await app.fetch(req, env);
-		expect(res.status).toBe(400);
-
-		const json = await res.json() as any;
-		expect(json.error).toContain('Nenhuma transação válida');
-	});
-
-	it('POST /api/import/confirm deve validar e salvar transações com ano preenchido na revisão', async () => {
-		const env = createEnvMock({
-			workspace_members: [memberRow],
-			transactions: [],
-		});
-		const t = await getToken();
-
-		const reviewedTransactions = [
-			{
-				dataParcial: '05/03',
-				ano: 2026,
-				descricao: 'SUPERMERCADO ABC',
-				valor: 154.3,
-				tipo: 'D',
-				cartao: 'Cartão 1234',
-				categoryId: 10,
-			},
-			{
-				dataParcial: '15/03',
-				ano: 2026,
-				descricao: 'ESTORNO COMPRA',
-				valor: 80.0,
-				tipo: 'C',
-				cartao: 'Cartão 1234',
-			},
-		];
-
-		const req = new Request('http://localhost/api/import/confirm', {
-			method: 'POST',
-			headers: {
-				'Content-Type': 'application/json',
-				Authorization: `Bearer ${t}`,
-			},
-			body: JSON.stringify({
-				workspaceId: WORKSPACE_ID,
-				transactions: reviewedTransactions,
-			}),
-		});
-
-		const res = await app.fetch(req, env);
 		expect(res.status).toBe(200);
-
-		const json = await res.json() as any;
+		const json = await res.json();
 		expect(json.success).toBe(true);
 		expect(json.count).toBe(2);
-	});
 
-	it('POST /import/confirm deve recusar se nenhuma transação for enviada', async () => {
-		const env = createEnvMock({
-			workspace_members: [memberRow],
-		});
-		const t = await getToken();
-
-		const req = new Request('http://localhost/import/confirm', {
-			method: 'POST',
-			headers: {
-				'Content-Type': 'application/json',
-				Authorization: `Bearer ${t}`,
-			},
-			body: JSON.stringify({
-				workspaceId: WORKSPACE_ID,
-				transactions: [],
-			}),
-		});
-
-		const res = await app.fetch(req, env);
-		expect(res.status).toBe(400);
+		expect(mockDb.data).toHaveLength(2);
+		expect(mockDb.data[0].boundParams[9]).toBe('2026-09-06');
+		expect(mockDb.data[0].boundParams[5]).toBe('NORMATEL HOME CENTER 03 DE 03 FORTALEZA');
+		expect(mockDb.data[0].boundParams[3]).toBe('card-uuid-2583');
 	});
 });

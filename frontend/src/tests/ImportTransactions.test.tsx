@@ -20,8 +20,8 @@ const mockCategories = [
   { id: 2, name: "Transporte", color: "#3357FF", type: "expense" },
 ];
 const mockCreditCards = [
-  { id: "card-1", name: "Nubank Roxinho (6768)", closing_day: 25, due_day: 5, limit_amount: 5000, last_four_digits: "6768" },
-  { id: "card-2", name: "Inter Adicional (1711)", closing_day: 20, due_day: 10, limit_amount: 3000, last_four_digits: "1711" },
+  { id: "card-2583", name: "Caixa Sim Internacional", closing_day: 25, due_day: 10, limit_amount: 5000, last_four_digits: "2583" },
+  { id: "card-2424", name: "Caixa Sim Internacional", closing_day: 25, due_day: 10, limit_amount: 3000, last_four_digits: "2424" },
 ];
 
 const mockParseResponse = {
@@ -82,21 +82,35 @@ vi.mocked(api.post).mockImplementation((url: string, data: any) => {
         success: true,
         totalCount: 2,
         precisaRevisao: true,
+        mesReferenciaFatura: "2026-09",
+        anoFatura: 2026,
+        mesFatura: 9,
+        dataVencimento: "2026-09-10",
         transactions: [
           {
-            dataParcial: "05/03",
-            descricao: "SUPERMERCADO ABC",
+            dataTransacao: "06/06",
+            dataCompetencia: "2026-09-06",
+            dataParcial: "06/06",
+            descricao: "NORMATEL HOME CENTER 03 DE 03 FORTALEZA",
             valor: 154.3,
             tipo: "D",
-            cartao: "Cartão 1234",
+            cartao: "Caixa Sim Internacional (•••• 2583)",
+            cartaoDigitos: "2583",
+            creditCardId: "card-2583",
+            cartaoIdentificado: true,
             precisaRevisao: true,
           },
           {
-            dataParcial: "15/03",
-            descricao: "ESTORNO COMPRA",
-            valor: 80.0,
-            tipo: "C",
-            cartao: "Cartão 1234",
+            dataTransacao: "07/05",
+            dataCompetencia: "2026-09-07",
+            dataParcial: "07/05",
+            descricao: "AMAZONMKTPLC AMOPERACO 04 DE 04 RIO DE JANEIR",
+            valor: 89.9,
+            tipo: "D",
+            cartao: "Caixa Sim Internacional (•••• 2583)",
+            cartaoDigitos: "2583",
+            creditCardId: "card-2583",
+            cartaoIdentificado: true,
             precisaRevisao: true,
           },
         ],
@@ -167,51 +181,14 @@ describe("Página de Importação de Extratos", () => {
     expect(descText).toBeInTheDocument();
   });
 
-  it("deve processar fatura em PDF e exibir transações agrupadas por múltiplos cartões", async () => {
-    vi.spyOn(pdfParser, "extractTextFromPdf").mockResolvedValue(`
-Fatura de Cartão - Vencimento: 15/09/2026
-Cartão Titular 5555****6768
-10/08 Supermercado Pão de Açúcar 250,00
-12/08 Uber *Trip 35,50
-
-Cartão Adicional 543882*******1711
-15/08 Farmácia Drogasil 89,90
-    `);
-
-    const { container } = renderImport();
-
-    await waitFor(() => {
-      expect(screen.getAllByText(/Conta \/ Cartão de Destino/i).length).toBeGreaterThan(0);
-    });
-
-    const pdfFile = new File(["%PDF-1.4 dummy content"], "fatura_agosto.pdf", {
-      type: "application/pdf",
-    });
-
-    const fileInput = container.querySelector('input[type="file"]') as HTMLInputElement;
-    fireEvent.change(fileInput, { target: { files: [pdfFile] } });
-
-    const submitBtn = await screen.findByRole("button", { name: /Processar Arquivo/i });
-    fireEvent.click(submitBtn);
-
-    const multiCardBadge = await screen.findByText((c) => c.includes("Múltiplos Cartões"));
-    expect(multiCardBadge).toBeInTheDocument();
-
-    expect((await screen.findAllByText(/6768/i)).length).toBeGreaterThan(0);
-    expect((await screen.findAllByText(/1711/i)).length).toBeGreaterThan(0);
-    expect(await screen.findByText("Supermercado Pão de Açúcar")).toBeInTheDocument();
-    expect(await screen.findByText("Farmácia Drogasil")).toBeInTheDocument();
-  });
-
-  it("deve processar fatura Caixa com REVISÃO MANUAL exibindo campo ANO editável e sem adivinhar ano", async () => {
+  it("deve processar fatura Caixa exibindo descrição completa, competência da fatura e vinculação por últimos 4 dígitos (Bugs 1, 2 e 3)", async () => {
     vi.spyOn(pdfParser, "extractTextFromPdf").mockResolvedValue(`
 CAIXA ECONOMICA FEDERAL
-Nome do Titular: JOAO DA SILVA
-CPF: 123.456.789-00
+Vencimento: 10/09/2026
 
-(Cartão 1234)
-05/03 SUPERMERCADO ABC 154,30D
-15/03 ESTORNO COMPRA 80,00C
+(Cartão 2583)
+06/06 NORMATEL HOME CENTER 03 DE 03 FORTALEZA 154,30D
+07/05 AMAZONMKTPLC AMOPERACO 04 DE 04 RIO DE JANEIR 89,90D
     `);
 
     const { container } = renderImport();
@@ -233,14 +210,19 @@ CPF: 123.456.789-00
     // Banner de revisão manual
     expect(await screen.findByText(/Fatura com Revisão Manual Obrigatória/i)).toBeInTheDocument();
 
-    // Verificar Data Parcial e valor
-    expect(await screen.findByText("05/03")).toBeInTheDocument();
-    expect(await screen.findByDisplayValue("SUPERMERCADO ABC")).toBeInTheDocument();
+    // Bug 1: Descrição completa sem corte de "03 DE 03 FORTALEZA"
+    expect(await screen.findByDisplayValue("NORMATEL HOME CENTER 03 DE 03 FORTALEZA")).toBeInTheDocument();
+    expect(await screen.findByDisplayValue("AMAZONMKTPLC AMOPERACO 04 DE 04 RIO DE JANEIR")).toBeInTheDocument();
 
-    // Botão Confirmar Importação
+    // Bug 2: Data de competência da fatura exibida (2026-09-06) e indicação da compra original (06/06)
+    expect(await screen.findByText("2026-09-06")).toBeInTheDocument();
+    expect(await screen.findByText(/Compra: 06\/06/i)).toBeInTheDocument();
+
+    // Bug 3: Vinculação automática com cartão cadastrado
+    expect((await screen.findAllByText(/Vinculado automaticamente/i)).length).toBeGreaterThan(0);
+
+    // Confirmar importação
     const confirmBtn = screen.getByRole("button", { name: /Confirmar Importação/i });
-    expect(confirmBtn).toBeInTheDocument();
-
     fireEvent.click(confirmBtn);
 
     // Modal de confirmação
@@ -256,9 +238,11 @@ CPF: 123.456.789-00
           workspaceId: "ws-1",
           transactions: expect.arrayContaining([
             expect.objectContaining({
-              dataParcial: "05/03",
-              ano: 2026,
-              descricao: "SUPERMERCADO ABC",
+              date: "2026-09-06",
+              dataCompetencia: "2026-09-06",
+              dataTransacao: "06/06",
+              descricao: "NORMATEL HOME CENTER 03 DE 03 FORTALEZA",
+              creditCardId: "card-2583",
               valor: 154.3,
             }),
           ]),

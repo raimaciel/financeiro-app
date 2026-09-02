@@ -1,82 +1,77 @@
 import { describe, it, expect } from 'vitest';
-import { extractTransactions } from '../../src/utils/caixaInvoiceParser';
+import { extractTransactions, detectInvoiceReference } from '../../src/utils/caixaInvoiceParser';
 
-describe('Caixa Invoice Parser (extractTransactions)', () => {
-	it('deve extrair transações no padrão DD/MM DESCRIÇÃO VALOR(D|C) sem inferir o ano', () => {
+describe('Caixa Invoice Parser (extractTransactions & detectInvoiceReference)', () => {
+	it('deve extrair transações preservando 100% da descrição sem truncar parcelas ou cidades (Bug 1)', () => {
 		const sampleText = `
 			CAIXA ECONOMICA FEDERAL
-			Nome do Titular: CARLOS SILVA
-			CPF: 123.456.789-00
-			Endereço: RUA DAS PALMEIRAS, 100
-			Limite de Crédito: R$ 15.000,00
-			Vencimento: 10/04/2026
+			Vencimento: 10/09/2026
 
-			(Cartão 1234)
-			05/03 SUPERMERCADO ABC 154,30D
-			12/03 UBER *TRIP 25,90D
-			15/03 ESTORNO COMPRA 80,00C
-			Total do Cartão 1234 260,20D
-
-			(Cartão 5678)
-			18/03 FARMACIA DROGASIL 94,50D
-			22/03 AMAZON.COM.BR 1.234,56D
-			Total dos Lançamentos 1.329,06D
-			Total a Pagar 1.589,26D
+			(Cartão 2583)
+			06/06 NORMATEL HOME CENTER 03 DE 03 FORTALEZA 150,00D
+			07/05 AMAZONMKTPLC AMOPERACO 04 DE 04 RIO DE JANEIR 89,90D
 		`;
 
 		const result = extractTransactions(sampleText);
 
-		expect(result).toHaveLength(5);
+		expect(result).toHaveLength(2);
 
-		// Transação 1
-		expect(result[0]).toMatchObject({
-			dataParcial: '05/03',
-			descricao: 'SUPERMERCADO ABC',
-			valor: 154.3,
-			tipo: 'D',
-			cartao: 'Cartão 1234',
-			precisaRevisao: true,
+		// Transação 1: Descrição completa preservada
+		expect(result[0].descricao).toBe('NORMATEL HOME CENTER 03 DE 03 FORTALEZA');
+		expect(result[0].valor).toBe(150.0);
+		expect(result[0].tipo).toBe('D');
+		expect(result[0].cartao).toBe('Cartão 2583');
+		expect(result[0].cartaoDigitos).toBe('2583');
+
+		// Transação 2: Descrição completa preservada
+		expect(result[1].descricao).toBe('AMAZONMKTPLC AMOPERACO 04 DE 04 RIO DE JANEIR');
+		expect(result[1].valor).toBe(89.9);
+		expect(result[1].tipo).toBe('D');
+		expect(result[1].cartaoDigitos).toBe('2583');
+	});
+
+	it('deve extrair a competência da fatura e associar dataCompetencia à transação (Bug 2)', () => {
+		const sampleText = `
+			CAIXA ECONOMICA FEDERAL
+			Demonstrativo da Fatura
+			Vencimento: 15/09/2026
+			Total a Pagar: R$ 450,00
+
+			(Cartão 2424)
+			06/06 COMPRA PARCELADA LOJA 03 DE 03 150,00D
+		`;
+
+		const ref = detectInvoiceReference(sampleText);
+		expect(ref).toMatchObject({
+			mesReferencia: '2026-09',
+			ano: 2026,
+			mes: 9,
+			dataVencimento: '2026-09-15',
 		});
 
-		// Transação 2
-		expect(result[1]).toMatchObject({
-			dataParcial: '12/03',
-			descricao: 'UBER *TRIP',
-			valor: 25.9,
-			tipo: 'D',
-			cartao: 'Cartão 1234',
-			precisaRevisao: true,
-		});
+		const result = extractTransactions(sampleText);
+		expect(result).toHaveLength(1);
+		// Data original da compra é 06/06
+		expect(result[0].dataTransacao).toBe('06/06');
+		// Mas a data de competência da fatura é Setembro/2026
+		expect(result[0].dataCompetencia).toBe('2026-09-06');
+		expect(result[0].anoFatura).toBe(2026);
+		expect(result[0].mesFatura).toBe(9);
+	});
 
-		// Transação 3 (Crédito / Estorno)
-		expect(result[2]).toMatchObject({
-			dataParcial: '15/03',
-			descricao: 'ESTORNO COMPRA',
-			valor: 80.0,
-			tipo: 'C',
-			cartao: 'Cartão 1234',
-			precisaRevisao: true,
-		});
+	it('deve extrair os 4 últimos dígitos do cartão para vinculação automática (Bug 3)', () => {
+		const sampleText = `
+			(Cartão 2583)
+			10/08 IFOOD *REFEICAO 45,00D
 
-		// Transação 4 (Segundo Cartão)
-		expect(result[3]).toMatchObject({
-			dataParcial: '18/03',
-			descricao: 'FARMACIA DROGASIL',
-			valor: 94.5,
-			tipo: 'D',
-			cartao: 'Cartão 5678',
-			precisaRevisao: true,
-		});
+			(Cartão 2424)
+			12/08 UBER *TRIP 22,50D
+		`;
 
-		// Transação 5 (Valor com milhar)
-		expect(result[4]).toMatchObject({
-			dataParcial: '22/03',
-			descricao: 'AMAZON.COM.BR',
-			valor: 1234.56,
-			tipo: 'D',
-			cartao: 'Cartão 5678',
-			precisaRevisao: true,
-		});
+		const result = extractTransactions(sampleText);
+		expect(result).toHaveLength(2);
+		expect(result[0].cartaoDigitos).toBe('2583');
+		expect(result[1].cartaoDigitos).toBe('2424');
 	});
 
 	it('deve ignorar linhas de dados pessoais, totalizadores e resumos', () => {

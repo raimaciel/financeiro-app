@@ -3,7 +3,7 @@ import { authMiddleware } from '../auth';
 import type { Bindings, Variables } from '../auth';
 import { parseOFX } from '../utils/ofxParser';
 import { parseCSV } from '../utils/csvParser';
-import { extractTransactions } from '../utils/caixaInvoiceParser';
+import { extractTransactions, detectInvoiceReference } from '../utils/caixaInvoiceParser';
 import { suggestCategory } from '../utils/categoryRules';
 import { detectInstallment } from '../utils/installmentDetector';
 import { checkDuplicate, type ExistingTransactionRef } from '../utils/deduplication';
@@ -32,7 +32,6 @@ async function resolveUserWorkspaceId(db: D1Database, userId: string, preferredW
 		}
 	}
 
-	// Busca o primeiro workspace onde o usuário é membro
 	const member = await db
 		.prepare('SELECT workspace_id, role FROM workspace_members WHERE user_id = ? ORDER BY invited_at ASC LIMIT 1')
 		.bind(userId)
@@ -76,8 +75,9 @@ async function handlePreview(c: any) {
 			return c.json({ error: 'Nenhum texto de fatura fornecido para análise.' }, 400);
 		}
 
-		// Extrai lançamentos sem inferir ano (retorna dataParcial "DD/MM" e precisaRevisao: true)
+		// Extrai lançamentos sem truncamento e detecta competência da fatura (Bugs 1 & 2)
 		const extracted = extractTransactions(pdfText);
+		const invoiceRef = detectInvoiceReference(pdfText);
 
 		if (extracted.length === 0) {
 			return c.json(
@@ -88,28 +88,78 @@ async function handlePreview(c: any) {
 			);
 		}
 
-		// Se tiver workspace associado, buscar categorias para sugerir
+		// Se tiver workspace associado, buscar categorias e cartões de crédito
 		let existingCategories: Array<{ id: number; name: string; type?: string }> = [];
+		let existingCreditCards: Array<{ id: string; name: string; last_four_digits?: string | null; brand?: string | null }> = [];
+
 		if (targetWorkspaceId) {
 			const catRes = await db
 				.prepare('SELECT id, name, type FROM categories WHERE workspace_id = ?')
 				.bind(targetWorkspaceId)
 				.all<{ id: number; name: string; type?: string }>();
 			existingCategories = catRes.results || [];
+
+			const cardRes = await db
+				.prepare('SELECT id, name, last_four_digits, brand FROM credit_cards WHERE workspace_id = ?')
+				.bind(targetWorkspaceId)
+				.all<{ id: string; name: string; last_four_digits?: string | null; brand?: string | null }>();
+			existingCreditCards = cardRes.results || [];
 		}
 
-		const currentYear = new Date().getFullYear();
+		const currentYear = invoiceRef.ano || new Date().getFullYear();
+		const currentMonth = invoiceRef.mes || new Date().getMonth() + 1;
 
 		const transactionsWithSuggestions = extracted.map((tx) => {
 			const categorySuggestion = suggestCategory(tx.descricao, existingCategories);
+
+			// Bug 3: Vinculação automática do cartão pelo final de 4 dígitos
+			let matchedCardId: string | null = null;
+			let matchedCardLabel = tx.cartao;
+			let isCardIdentified = false;
+
+			if (tx.cartaoDigitos && existingCreditCards.length > 0) {
+				const matchedCard = existingCreditCards.find((c) => {
+					if (c.last_four_digits && c.last_four_digits.trim() === tx.cartaoDigitos) {
+						return true;
+					}
+					if (c.name && c.name.includes(tx.cartaoDigitos!)) {
+						return true;
+					}
+					return false;
+				});
+
+				if (matchedCard) {
+					matchedCardId = matchedCard.id;
+					matchedCardLabel = `${matchedCard.name}${matchedCard.last_four_digits ? ` (•••• ${matchedCard.last_four_digits})` : ''}`;
+					isCardIdentified = true;
+				}
+			}
+
+			// Bug 2: Data de competência da fatura
+			const [dd] = tx.dataTransacao.split('/');
+			const dataCompetencia = tx.dataCompetencia || `${currentYear}-${String(currentMonth).padStart(2, '0')}-${dd.padStart(2, '0')}`;
+
 			return {
 				id: tx.id || crypto.randomUUID(),
+				dataTransacao: tx.dataTransacao,
 				dataParcial: tx.dataParcial,
+				dataCompetencia,
+				date: dataCompetencia,
 				ano: currentYear,
-				descricao: tx.descricao,
+				mes: currentMonth,
+				mesReferenciaFatura: invoiceRef.mesReferencia,
+				dataVencimento: invoiceRef.dataVencimento,
+				descricao: tx.descricao, // Descrição integral (Bug 1)
+				description: tx.descricao,
 				valor: tx.valor,
+				amount: tx.valor,
 				tipo: tx.tipo,
-				cartao: tx.cartao,
+				type: tx.tipo === 'C' ? 'income' : 'expense',
+				cartao: matchedCardLabel,
+				cartaoDigitos: tx.cartaoDigitos,
+				creditCardId: matchedCardId,
+				cartaoIdentificado: isCardIdentified,
+				cardLabel: matchedCardLabel,
 				precisaRevisao: true,
 				categoryId: categorySuggestion.categoryId,
 				categoryName: categorySuggestion.categoryName,
@@ -120,6 +170,10 @@ async function handlePreview(c: any) {
 			success: true,
 			totalCount: transactionsWithSuggestions.length,
 			precisaRevisao: true,
+			mesReferenciaFatura: invoiceRef.mesReferencia,
+			anoFatura: currentYear,
+			mesFatura: currentMonth,
+			dataVencimento: invoiceRef.dataVencimento,
 			transactions: transactionsWithSuggestions,
 		});
 	} catch (err: any) {
@@ -134,7 +188,7 @@ importRouter.post('/api/import/preview', handlePreview);
 importRouter.post('/workspaces/:workspaceId/import/preview', handlePreview);
 
 // =========================================================================
-// 2. ENDPOINTS DE CONFIRMAÇÃO (SALVA NO BANCO APÓS REVISÃO MANUAL)
+// 2. ENDPOINT DE CONFIRMAÇÃO EM LOTE - SALVA DEFINITIVAMENTE NO BANCO
 // =========================================================================
 
 async function handleConfirm(c: any) {
@@ -143,39 +197,39 @@ async function handleConfirm(c: any) {
 		const db = c.env.financeiro_db || (c.env as any).DB;
 
 		const body = await c.req.json();
-		const paramWs = c.req.param('workspaceId') || null;
-		const targetWsId = paramWs || body.workspaceId || null;
+		const rawWorkspaceId = c.req.param('workspaceId') || body.workspaceId;
 
-		const wsAuth = await resolveUserWorkspaceId(db, userId, targetWsId);
-		if (!wsAuth) {
-			return c.json({ error: 'Acesso negado. Nenhum workspace válido encontrado para este usuário.' }, 403);
+		const resolved = await resolveUserWorkspaceId(db, userId, rawWorkspaceId);
+		if (!resolved) {
+			return c.json({ error: 'Workspace não encontrado ou você não tem permissão.' }, 403);
 		}
 
-		if (wsAuth.role === 'viewer') {
-			return c.json({ error: 'Permissão insuficiente. Usuários viewer não podem importar transações.' }, 403);
+		const { workspaceId, role } = resolved;
+		if (role === 'viewer') {
+			return c.json({ error: 'Permissão insuficiente. Visualizadores não podem importar transações.' }, 403);
 		}
 
-		const workspaceId = wsAuth.workspaceId;
-		const rawTransactions = body.transactions;
-
-		if (!Array.isArray(rawTransactions) || rawTransactions.length === 0) {
-			return c.json({ error: 'Nenhuma transação informada para gravação.' }, 400);
+		const rawTransactions = Array.isArray(body.transactions) ? body.transactions : [];
+		if (rawTransactions.length === 0) {
+			return c.json({ error: 'Nenhuma transação enviada para confirmação.' }, 400);
 		}
 
-		const statements: D1PreparedStatement[] = [];
+		const statements: any[] = [];
 
 		for (const item of rawTransactions) {
-			// Montagem e validação da data completa (YYYY-MM-DD)
-			let isoDate = '';
+			// Bug 2: Prioriza dataCompetencia sobre a data de compra original
+			let isoDate: string | null = null;
 
-			if (item.dataCompleta && /^\d{4}-\d{2}-\d{2}$/.test(String(item.dataCompleta).trim())) {
+			if (item.dataCompetencia && /^\d{4}-\d{2}-\d{2}$/.test(String(item.dataCompetencia).trim())) {
+				isoDate = String(item.dataCompetencia).trim();
+			} else if (item.dataCompleta && /^\d{4}-\d{2}-\d{2}$/.test(String(item.dataCompleta).trim())) {
 				isoDate = String(item.dataCompleta).trim();
 			} else if (item.date && /^\d{4}-\d{2}-\d{2}$/.test(String(item.date).trim())) {
 				isoDate = String(item.date).trim();
 			} else if (item.dataParcial && (item.ano || item.year)) {
 				const yearNum = parseInt(String(item.ano || item.year).trim(), 10);
 				if (isNaN(yearNum) || yearNum < 1970 || yearNum > 2100) {
-					continue; // Ano inválido ignorado
+					continue;
 				}
 				const dateParts = String(item.dataParcial).trim().split('/');
 				if (dateParts.length !== 2) continue;
@@ -197,7 +251,7 @@ async function handleConfirm(c: any) {
 				continue;
 			}
 
-			// Validação da descrição
+			// Validação da descrição completa sem truncamento (Bug 1)
 			const descricao = String(item.descricao || item.description || 'Lançamento Importado').trim();
 
 			// Validação do tipo (D/expense ou C/income)
@@ -205,6 +259,7 @@ async function handleConfirm(c: any) {
 			const txType: 'income' | 'expense' = (rawType === 'C' || rawType === 'INCOME') ? 'income' : 'expense';
 
 			const categoryIdNum = item.categoryId ? Number(item.categoryId) : null;
+			// Bug 3: Vincula ao credit_card_id informado na revisão
 			const targetCreditCardId = item.creditCardId || body.creditCardId || null;
 
 			const installments = Math.max(1, Math.floor(Number(item.installments) || 1));
