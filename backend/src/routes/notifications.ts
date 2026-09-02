@@ -74,7 +74,7 @@ notificationsRouter.get('/workspaces/:workspaceId/notifications', async (c) => {
 			}
 		});
 
-		// 3. Buscar cartões de crédito e faturas registradas
+		// 3. Buscar cartões de crédito, faturas e transações
 		const { results: creditCards } = await db
 			.prepare('SELECT id, name, brand, closing_day, due_day FROM credit_cards WHERE workspace_id = ?')
 			.bind(workspaceId)
@@ -82,6 +82,11 @@ notificationsRouter.get('/workspaces/:workspaceId/notifications', async (c) => {
 
 		const { results: cardInvoices } = await db
 			.prepare('SELECT credit_card_id, reference_month, status, paid_at FROM invoices WHERE workspace_id = ?')
+			.bind(workspaceId)
+			.all<any>();
+
+		const { results: transactions } = await db
+			.prepare('SELECT id, credit_card_id, amount, date FROM transactions WHERE workspace_id = ?')
 			.bind(workspaceId)
 			.all<any>();
 
@@ -111,6 +116,7 @@ notificationsRouter.get('/workspaces/:workspaceId/notifications', async (c) => {
 			cardInvoices: cardInvoices || [],
 			savingsGoals: savingsGoals || [],
 			recurringRules: (recurringRules as any) || [],
+			transactions: transactions || [],
 			lastTransactionDate: lastTx?.date || null,
 			currentDate: now,
 		});

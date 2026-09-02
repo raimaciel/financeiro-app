@@ -36,7 +36,7 @@ describe('notificationGenerator - generateWorkspaceNotifications', () => {
 		expect(notifs[0].message).toContain('ultrapassado');
 	});
 
-	it('deve alertar sobre fatura próxima do vencimento (<= 3 dias)', () => {
+	it('deve alertar sobre fatura próxima do vencimento (<= 3 dias) quando houver transações reais', () => {
 		// Hoje = 10/10/2026. Cartão com closing_day = 5, due_day = 12 (vence em 2 dias: 12/10/2026)
 		const notifs = generateWorkspaceNotifications({
 			workspaceId: 'ws-1',
@@ -46,12 +46,30 @@ describe('notificationGenerator - generateWorkspaceNotifications', () => {
 			cardInvoices: [
 				{ credit_card_id: 'c1', reference_month: '2026-09', status: 'paid' },
 			],
+			transactions: [
+				{ credit_card_id: 'c1', amount: 150.0, date: '2026-10-02' },
+			],
 			currentDate: fixedDate,
 		});
 
 		const invoiceNotif = notifs.find((n) => n.type === 'invoice_due_soon');
 		expect(invoiceNotif).toBeDefined();
 		expect(invoiceNotif?.severity).toBe('warning');
+	});
+
+	it('não deve alertar sobre fatura quando não houver compras/transações reais (total 0)', () => {
+		const notifs = generateWorkspaceNotifications({
+			workspaceId: 'ws-1',
+			creditCards: [
+				{ id: 'c1', name: 'Nubank', closing_day: 5, due_day: 12 },
+			],
+			cardInvoices: [],
+			transactions: [], // Sem compras
+			currentDate: fixedDate,
+		});
+
+		const invoiceNotif = notifs.find((n) => n.type === 'invoice_due_soon');
+		expect(invoiceNotif).toBeUndefined();
 	});
 
 	it('deve alertar sobre meta atingida e meta com prazo próximo', () => {

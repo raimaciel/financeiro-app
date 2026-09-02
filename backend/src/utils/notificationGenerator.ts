@@ -30,6 +30,7 @@ export interface NotificationGeneratorOptions {
 	cardInvoices?: any[];
 	savingsGoals?: any[];
 	recurringRules?: RecurringRule[];
+	transactions?: any[];
 	lastTransactionDate?: string | null;
 	currentDate?: Date;
 }
@@ -46,6 +47,7 @@ export function generateWorkspaceNotifications(options: NotificationGeneratorOpt
 		cardInvoices = [],
 		savingsGoals = [],
 		recurringRules = [],
+		transactions = [],
 		lastTransactionDate = null,
 		currentDate = new Date(),
 	} = options;
@@ -105,9 +107,21 @@ export function generateWorkspaceNotifications(options: NotificationGeneratorOpt
 
 		for (const refMonth of monthsToCheck) {
 			const period = calculateInvoicePeriod(closingDay, dueDay, refMonth, currentDate);
-			const isPaid = paidInvoicesMap.has(`${card.id}_${refMonth}`);
+			const savedInv = cardInvoices.find(
+				(inv) => inv.credit_card_id === card.id && inv.reference_month === refMonth
+			);
+			const isPaid = savedInv?.status === 'paid' || paidInvoicesMap.has(`${card.id}_${refMonth}`);
 
-			if (!isPaid && period.days_until_due <= 3 && period.days_until_due >= -30) {
+			// Calcular se há compras/saldo real na fatura
+			const cardTxs = transactions.filter(
+				(tx) => tx.credit_card_id === card.id && tx.date >= period.start_date && tx.date <= period.closing_date
+			);
+			const totalAmountFromTxs = cardTxs.reduce((acc, curr) => acc + Number(curr.amount || 0), 0);
+			const totalAmount = (savedInv && Number(savedInv.total_amount) > 0) ? Number(savedInv.total_amount) : totalAmountFromTxs;
+			const hasRealTransactions = cardTxs.length > 0 || totalAmount > 0;
+
+			// Só notifica se a fatura NÃO estiver paga E possuir transações/saldo real > 0
+			if (!isPaid && hasRealTransactions && period.days_until_due <= 3 && period.days_until_due >= -30) {
 				let severity: NotificationSeverity = 'warning';
 				let title = `Fatura do ${card.name} Vence em Breve`;
 				let message = `A fatura vence no dia ${period.due_date} (faltam ${period.days_until_due} dia(s)).`;

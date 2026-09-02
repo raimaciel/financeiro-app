@@ -219,7 +219,15 @@ function CardItem({
     enabled: !!workspaceId && !!card.id,
   });
 
-  const currentInvoice = invoices.length > 0 ? invoices[0] : null;
+  const now = new Date();
+  const todayISO = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+  const currentMonthISO = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+
+  const currentInvoice =
+    invoices.find((inv) => inv.start_date && inv.closing_date && todayISO >= inv.start_date && todayISO <= inv.closing_date) ||
+    invoices.find((inv) => inv.reference_month === currentMonthISO) ||
+    invoices.find((inv) => inv.status === 'open') ||
+    (invoices.length > 0 ? invoices[0] : null);
   const isVirtual = (card.cardType || card.card_type) === "virtual";
   const tier = card.cardTier || card.card_tier || "standard";
   const bankName = card.bankName || card.bank_name;
@@ -446,6 +454,27 @@ export default function CreditCards() {
     queryFn: () => fetchInvoices(selectedWorkspaceId, invoicesCard!.id),
     enabled: !!selectedWorkspaceId && !!invoicesCard?.id,
   });
+
+  // Seleciona a fatura do mês atual por padrão quando as faturas do modal carregam
+  React.useEffect(() => {
+    if (invoices.length > 0) {
+      const now = new Date();
+      const todayISO = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+      const currentMonthISO = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+
+      const activeIdx = invoices.findIndex(
+        (inv) =>
+          (inv.start_date && inv.closing_date && todayISO >= inv.start_date && todayISO <= inv.closing_date) ||
+          inv.reference_month === currentMonthISO ||
+          inv.status === 'open'
+      );
+      if (activeIdx !== -1) {
+        setSelectedInvoiceIndex(activeIdx);
+      } else {
+        setSelectedInvoiceIndex(0);
+      }
+    }
+  }, [invoices]);
 
   const { data: forecastData, isLoading: loadingForecast } = useQuery<InvoiceForecastResponse>({
     queryKey: ["invoice-forecast", selectedWorkspaceId, invoicesCard?.id],
