@@ -906,6 +906,36 @@ Permitir que os administradores editem o nome completo, status de ativação da 
 ### Pendências
 - Nenhuma pendência.
 
+---
+
+## 23. [2026-09-02 09:56] - Filtro de Faturas Vazias em Notificações e Seleção de Fatura Atual no Card
+
+### O que foi feito
+1. **Filtro de Faturas Sem Compras em Notificações (`backend/src/utils/notificationGenerator.ts` e `backend/src/routes/notifications.ts`)**:
+   - Adicionada validação para verificar se a fatura possui compras/lançamentos reais (`transactions_count > 0` ou `total_amount > 0`).
+   - Evita a geração de notificações de "Fatura Vencida" ou "Fatura Vence em Breve" para cartões recém-cadastrados ou meses sem nenhuma despesa.
+   - Atualizados os testes unitários em `backend/tests/unit/notificationGenerator.test.ts`.
+2. **Seleção da Fatura do Mês Atual no Frontend (`frontend/src/pages/CreditCards.tsx`)**:
+   - Ajustada a lógica do `CardItem` para buscar a fatura que compreende a data de hoje (`start_date <= hoje <= closing_date`), o `reference_month` do mês corrente ou status `open`, em vez de pegar cegamente o item `invoices[0]` (que retornava a projeção mais distante no futuro).
+   - Ao abrir o modal de detalhes de faturas, a aba de faturas seleciona por padrão a fatura ativa correspondente.
+3. **Validação e Deploy**:
+   - **158 testes passando no Backend (100%) em 21 arquivos**.
+   - **60 testes passando no Frontend (100%) em 13 arquivos**.
+   - Build do Frontend e deploy no Cloudflare Pages: `https://financeiro-app-6wf.pages.dev` e preview `https://0f3ceb20.financeiro-app-6wf.pages.dev`.
+   - Deploy do Backend Worker no Cloudflare Workers: `https://backend.raimaciel.workers.dev`.
+   - Commit enviado para o GitHub: `e1b7b9e`.
+
+### Arquivos modificados
+- `backend/src/utils/notificationGenerator.ts`: Filtro de compras reais para notificações de faturas.
+- `backend/src/routes/notifications.ts`: Passagem de transações para o gerador de notificações.
+- `backend/tests/unit/notificationGenerator.test.ts`: Testes unitários para o filtro de transações.
+- `frontend/src/pages/CreditCards.tsx`: Lógica de seleção da fatura do mês atual.
+- `backend/PROGRESSO.md` e `PROGRESSO.md`: Registro da resolução.
+
+### Pendências
+- Nenhuma pendência.
+
+
 
 
 
