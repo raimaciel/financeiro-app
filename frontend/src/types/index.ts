@@ -33,25 +33,36 @@ export interface Category {
   createdAt?: string;
 }
 
+export type CardType = "physical" | "virtual" | "virtual_permanent" | "virtual_temporary" | "virtual_app_linked";
+
 export interface CreditCard {
   id: string;
   workspace_id: string;
   name: string;
   brand?: string;
   limit_amount?: number;
+  limit?: number;
   closing_day: number;
+  closingDay?: number;
   due_day: number;
+  dueDay?: number;
   best_purchase_day?: number;
+  bestPurchaseDay?: number;
   color?: string;
-  card_type?: "physical" | "virtual";
-  cardType?: "physical" | "virtual";
+  card_type?: CardType;
+  cardType?: CardType;
   last_four_digits?: string;
   lastFourDigits?: string;
   bank_name?: string;
   bankName?: string;
+  bank?: string;
   institution?: string;
   card_tier?: "standard" | "gold" | "platinum" | "black" | "infinite" | string;
   cardTier?: "standard" | "gold" | "platinum" | "black" | "infinite" | string;
+  registered_for?: string | null;
+  registeredFor?: string | null;
+  expires_at?: string | null;
+  expiresAt?: string | null;
   card_image_url?: string | null;
   cardImageUrl?: string | null;
   image_url?: string | null;

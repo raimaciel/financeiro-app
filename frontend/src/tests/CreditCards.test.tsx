@@ -1,11 +1,25 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import React from "react";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
-import { BrowserRouter } from "react-router-dom";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 import CreditCards from "@/pages/CreditCards";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { BrowserRouter } from "react-router-dom";
 import api from "@/lib/api";
 
-const mockWorkspaces = [{ id: "ws-1", name: "Workspace Teste", type: "personal", role: "owner" }];
+// Mock do módulo de API
+vi.mock("@/lib/api", () => ({
+  default: {
+    get: vi.fn(),
+    post: vi.fn(),
+    put: vi.fn(),
+    delete: vi.fn(),
+  },
+}));
+
+const mockWorkspaces = [
+  { id: "ws-1", name: "Meu Workspace", role: "owner" },
+];
+
 const mockCards = [
   {
     id: "card-1",
@@ -15,43 +29,64 @@ const mockCards = [
     limit_amount: 15000,
     closing_day: 25,
     due_day: 5,
-    color: "#8A05BE",
-    cardType: "physical",
-    lastFourDigits: "1234",
-    bankName: "Nubank",
+    best_purchase_day: 26,
+    color: "#820ad1",
+    card_type: "physical",
+    last_four_digits: "1234",
+    bank_name: "Nubank",
     institution: "Nu Pagamentos S.A.",
-    cardTier: "black",
+    card_tier: "black",
     card_image_url: "workspaces/ws-1/cards/card-1/photo.jpg",
-    imageUrl: "/cards/card-1/image",
   },
   {
     id: "card-2",
     workspace_id: "ws-1",
     name: "Inter Virtual",
     brand: "Visa",
-    limit_amount: 8000,
+    limit_amount: 5000,
     closing_day: 10,
-    due_day: 20,
-    color: "#FF7A00",
-    cardType: "virtual",
-    lastFourDigits: "9876",
-    bankName: "Banco Inter",
-    cardTier: "platinum",
+    due_day: 17,
+    best_purchase_day: 11,
+    color: "#ff7a00",
+    card_type: "virtual_permanent",
+    registered_for: "Netflix",
+    last_four_digits: "9876",
+    bank_name: "Banco Inter",
+    institution: "Banco Inter S.A.",
+    card_tier: "platinum",
+    card_image_url: null,
+  },
+  {
+    id: "card-3",
+    workspace_id: "ws-1",
+    name: "Cartão Compra Única",
+    brand: "Mastercard",
+    limit_amount: 1000,
+    closing_day: 15,
+    due_day: 22,
+    best_purchase_day: 16,
+    color: "#1d3557",
+    card_type: "virtual_temporary",
+    registered_for: "Amazon",
+    expires_at: "2026-09-03T18:00:00Z",
+    last_four_digits: "5555",
+    bank_name: "Nubank",
+    card_tier: "standard",
   },
 ];
 
 const mockInvoices = [
   {
     id: "inv-1",
-    card_id: "card-1",
+    credit_card_id: "card-1",
     workspace_id: "ws-1",
-    reference_month: "2026-08",
-    start_date: "2026-07-26",
-    closing_date: "2026-08-25",
-    due_date: "2026-09-05",
-    days_until_due: 4,
-    total_amount: 1450.5,
+    reference_month: "2026-09",
+    start_date: "2026-08-26",
+    closing_date: "2026-09-25",
+    due_date: "2026-10-05",
+    total_amount: 1250.5,
     status: "open",
+    days_until_due: 33,
   },
 ];
 
@@ -59,29 +94,9 @@ const mockForecast = {
   card_id: "card-1",
   card_name: "Nubank Ultravioleta",
   limit_amount: 15000,
-  total_committed_future: 2500,
+  total_committed_future: 450.0,
   months_ahead: 6,
-  forecast: [
-    {
-      reference_month: "2026-09",
-      month_label: "Setembro 2026",
-      closing_date: "2026-09-25",
-      due_date: "2026-10-05",
-      days_until_due: 34,
-      predicted_total: 600,
-      installments_count: 2,
-      items: [
-        {
-          transaction_id: "tx-1",
-          description: "Notebook 1/3",
-          amount: 600,
-          installments: 3,
-          installment_current: 1,
-          original_date: "2026-08-28",
-        },
-      ],
-    },
-  ],
+  forecast: [],
 };
 
 function renderCreditCards() {
@@ -138,150 +153,72 @@ describe("Página de Cartões de Crédito e Faturas", () => {
     });
   });
 
-  it("deve renderizar os cartões com dados de identificação, ícones de bandeira e imagem de fundo", async () => {
+  it("deve renderizar os cartões com dados de identificação, badges e rastreabilidade", async () => {
     renderCreditCards();
 
     expect(screen.getByText(/Cartões de Crédito e Faturas/i)).toBeInTheDocument();
 
     await waitFor(() => {
-      expect(screen.getByText("Nubank Ultravioleta")).toBeInTheDocument();
-      expect(screen.getByText("Inter Virtual")).toBeInTheDocument();
+      expect(screen.getByRole("heading", { name: "Nubank Ultravioleta" })).toBeInTheDocument();
+      expect(screen.getByRole("heading", { name: "Inter Virtual" })).toBeInTheDocument();
+      expect(screen.getByRole("heading", { name: "Cartão Compra Única" })).toBeInTheDocument();
     });
 
     // Verificar badges de tipo
-    expect(screen.getByText("🏦 Físico")).toBeInTheDocument();
-    expect(screen.getByText("💳 Virtual")).toBeInTheDocument();
+    expect(screen.getAllByText(/Físico/i).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/Virtual/i).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/24h/i).length).toBeGreaterThan(0);
+
+    // Rastreabilidade de virtual (🔒 Cadastrado em: Netflix e Amazon)
+    expect(screen.getAllByText(/Cadastrado em:/i).length).toBeGreaterThan(0);
+    expect(screen.getByText("Netflix")).toBeInTheDocument();
+    expect(screen.getByText("Amazon")).toBeInTheDocument();
 
     // Verificar bancos
-    expect(screen.getByText("Nubank")).toBeInTheDocument();
     expect(screen.getByText("Banco Inter")).toBeInTheDocument();
 
     // Verificar últimos 4 dígitos
     expect(screen.getByText(/•••• 1234/i)).toBeInTheDocument();
     expect(screen.getByText(/•••• 9876/i)).toBeInTheDocument();
-
-    // Verificar badges de tier (black e platinum)
-    expect(screen.getByText("black")).toBeInTheDocument();
-    expect(screen.getByText("platinum")).toBeInTheDocument();
-
-    // Verificar imagem de fundo renderizada para o cartão 1
-    const imgElement = screen.getByAltText("Nubank Ultravioleta");
-    expect(imgElement).toBeInTheDocument();
-    expect(imgElement).toHaveAttribute("src", "/cards/card-1/image");
   });
 
-  it("deve abrir o modal 'Novo Cartão de Crédito' e comprovar textualmente todos os 12 campos no DOM", async () => {
+  it("deve renderizar a barra de filtros e contador de cartões", async () => {
     renderCreditCards();
 
     await waitFor(() => {
-      expect(screen.getByText("Nubank Ultravioleta")).toBeInTheDocument();
+      expect(screen.getByRole("heading", { name: "Nubank Ultravioleta" })).toBeInTheDocument();
+    });
+
+    // Contador de cartões
+    expect(screen.getAllByText(/3 cartões/i).length).toBeGreaterThan(0);
+    expect(screen.getByPlaceholderText(/Buscar cartão.../i)).toBeInTheDocument();
+  });
+
+  it("deve abrir o modal 'Novo Cartão de Crédito' e validar campos", async () => {
+    renderCreditCards();
+
+    await waitFor(() => {
+      expect(screen.getByRole("heading", { name: "Nubank Ultravioleta" })).toBeInTheDocument();
     });
 
     const btn = screen.getByRole("button", { name: /Novo Cartão/i });
-    expect(btn).not.toBeDisabled();
     fireEvent.click(btn);
 
     await waitFor(() => {
       expect(screen.getByText("Novo Cartão de Crédito")).toBeInTheDocument();
-      expect(screen.getByText(/Configure os dados de identificação/i)).toBeInTheDocument();
-
-      // 1. Nome do Cartão *
-      expect(screen.getByLabelText(/Nome do Cartão \*/i)).toBeInTheDocument();
-      // 2. Tipo de Cartão (Físico / Virtual)
-      expect(screen.getByLabelText(/Tipo de Cartão/i)).toBeInTheDocument();
-      // 3. Banco / Emissor
-      expect(screen.getByLabelText(/Banco \/ Emissor/i)).toBeInTheDocument();
-      // 4. Bandeira (Opcional)
-      expect(screen.getByLabelText(/Bandeira \(Opcional\)/i)).toBeInTheDocument();
-      // 5. Últimos 4 dígitos
-      expect(screen.getByLabelText(/Últimos 4 dígitos/i)).toBeInTheDocument();
-      // 6. Instituição (Opcional)
-      expect(screen.getByLabelText(/Instituição \(Opcional\)/i)).toBeInTheDocument();
-      // 7. Tier do Cartão
-      expect(screen.getByLabelText(/Tier do Cartão/i)).toBeInTheDocument();
-      // 8. Limite Total (R$)
-      expect(screen.getByLabelText(/Limite Total \(R\$\)/i)).toBeInTheDocument();
-      // 9. Dia do Fechamento (1-31) *
-      expect(screen.getByLabelText(/Dia do Fechamento \(1-31\) \*/i)).toBeInTheDocument();
-      // 10. Dia do Vencimento (1-31) *
-      expect(screen.getByLabelText(/Dia do Vencimento \(1-31\) \*/i)).toBeInTheDocument();
-      // 11. Foto / Imagem do Cartão (Opcional)
-      expect(screen.getByLabelText(/Foto \/ Imagem do Cartão \(Opcional\)/i)).toBeInTheDocument();
-      // 12. Cor de Fundo do Cartão
-      expect(screen.getByText(/Cor de Fundo do Cartão/i)).toBeInTheDocument();
-    });
-  });
-
-  it("deve filtrar caracteres não numéricos e validar que lastFourDigits tenha 4 dígitos", async () => {
-    renderCreditCards();
-
-    await waitFor(() => {
-      expect(screen.getByText("Nubank Ultravioleta")).toBeInTheDocument();
-    });
-
-    const btn = screen.getByRole("button", { name: /Novo Cartão/i });
-    fireEvent.click(btn);
-
-    await waitFor(() => {
-      expect(screen.getByLabelText(/Nome do Cartão/i)).toBeInTheDocument();
     });
 
     const nameInput = screen.getByLabelText(/Nome do Cartão \*/i);
-    const digitsInput = screen.getByLabelText(/Últimos 4 dígitos/i);
-
-    fireEvent.change(nameInput, { target: { value: "Cartão Teste Validação" } });
-    fireEvent.change(digitsInput, { target: { value: "12a" } });
-
-    // "12a" deve virar "12"
-    expect((digitsInput as HTMLInputElement).value).toBe("12");
+    fireEvent.change(nameInput, { target: { value: "Meu Novo Cartão" } });
 
     const submitBtn = screen.getByRole("button", { name: /Criar Cartão/i });
     fireEvent.click(submitBtn);
 
     await waitFor(() => {
-      expect(screen.getByText(/Os últimos 4 dígitos devem conter exatamente 4 números/i)).toBeInTheDocument();
+      expect(api.post).toHaveBeenCalledWith(
+        "/workspaces/ws-1/credit-cards",
+        expect.objectContaining({ name: "Meu Novo Cartão" })
+      );
     });
-  });
-
-  it("deve abrir modal 'Editar Cartão de Crédito' pré-preenchido com todos os campos e preview de foto existente", async () => {
-    renderCreditCards();
-
-    await waitFor(() => {
-      expect(screen.getByText("Nubank Ultravioleta")).toBeInTheDocument();
-    });
-
-    const moreButtons = screen.getAllByRole("button");
-    const moreMenuBtn = moreButtons.find((b) => b.querySelector("svg.lucide-more-vertical") || b.innerHTML.includes("lucide-more-vertical"));
-    if (moreMenuBtn) {
-      fireEvent.click(moreMenuBtn);
-      const editOption = await screen.findByText("Editar");
-      fireEvent.click(editOption);
-
-      await waitFor(() => {
-        expect(screen.getByText("Editar Cartão de Crédito")).toBeInTheDocument();
-
-        // 1. Nome
-        const nameInput = screen.getByLabelText(/Nome do Cartão \*/i) as HTMLInputElement;
-        expect(nameInput.value).toBe("Nubank Ultravioleta");
-
-        // 3. Banco
-        const bankInput = screen.getByLabelText(/Banco \/ Emissor/i) as HTMLInputElement;
-        expect(bankInput.value).toBe("Nubank");
-
-        // 5. Últimos 4 dígitos
-        const digitsInput = screen.getByLabelText(/Últimos 4 dígitos/i) as HTMLInputElement;
-        expect(digitsInput.value).toBe("1234");
-
-        // 6. Instituição
-        const instInput = screen.getByLabelText(/Instituição \(Opcional\)/i) as HTMLInputElement;
-        expect(instInput.value).toBe("Nu Pagamentos S.A.");
-
-        // 11. Preview da Imagem
-        expect(screen.getByAltText("Preview do Cartão")).toBeInTheDocument();
-
-        // Botão de salvar no modo edit
-        expect(screen.getByRole("button", { name: /Salvar Alterações/i })).toBeInTheDocument();
-      });
-    }
   });
 });

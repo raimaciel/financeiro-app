@@ -824,6 +824,173 @@ Permitir que os administradores editem o nome completo, status de ativação da 
 ### Pendências
 - Nenhuma pendência.
 
+---
+
+## 20. [2026-09-02 08:23] - Correção do Submit e Diagnóstico do Modal de Criação de Workspace
+
+### O que foi feito
+1. **Diagnóstico da Causa Raiz**:
+   - No modal `Novo Workspace` em `frontend/src/pages/Workspaces.tsx`, o botão de submit estava desacoplado fora da tag `<form>` utilizando `form="workspace-form"` em conjunto com o modal de portal do Radix Dialog.
+   - Em certos navegadores, essa desconexão impedia o acionamento do evento sintético `onSubmit`, ou no caso de erros de rede/auth não capturados, a mutation caía no fallback genérico `"Erro ao criar workspace"` sem logar no console.
+2. **Correções Aplicadas**:
+   - Aninhados os botões de ação e o `DialogFooter` diretamente dentro do `<form onSubmit={handleSubmit}>`.
+   - Adicionados logs explícitos via `console.error` em `createWorkspace`, `updateWorkspace`, `deleteWorkspace` e nos hooks `onError` do React Query.
+   - Mensagens de erro com fallback inteligente detalhado (`err.response?.data?.error || err.response?.data?.message || err.message`).
+   - Criado `frontend/src/tests/Workspaces.test.tsx` cobrindo listagem, criação e tratamento de erros.
+3. **Validação e Deploy**:
+   - **60 testes passando no Frontend (100%) em 13 arquivos**.
+   - Build de produção e deploy publicados no Cloudflare Pages: `https://financeiro-app-6wf.pages.dev` e preview `https://1653b4c1.financeiro-app-6wf.pages.dev`.
+   - Commit enviado para o GitHub: `eae2183`.
+
+### Arquivos criados
+- `frontend/src/tests/Workspaces.test.tsx`: Testes unitários do módulo de Workspaces.
+
+### Arquivos modificados
+- `frontend/src/pages/Workspaces.tsx`: Estrutura do formulário, submit e logs.
+- `backend/PROGRESSO.md` e `PROGRESSO.md`: Registro da atualização.
+
+### Pendências
+- Nenhuma pendência.
+
+---
+
+## 21. [2026-09-02 08:41] - Correção do Header de Autorização `Bearer ${token}` em `api.ts`
+
+### O que foi feito
+1. **Diagnóstico da Causa Raiz**:
+   - No arquivo `frontend/src/lib/api.ts` (linha 10), o interceptor de requisições do Axios continha `config.headers.Authorization = Bearer ;` (sem aspas/crases e sem a variável `${token}`).
+   - Ao executar qualquer chamada autenticada após login, o JavaScript tentava resolver `Bearer` como um identificador não declarado, gerando `ReferenceError: Bearer is not defined`.
+2. **Correções Aplicadas**:
+   - Corrigida a linha 10 para `config.headers.Authorization = \`Bearer \${token}\`;`.
+   - Varredura em todo o código-fonte confirmou que não existem outras ocorrências de sintaxe incorreta de autenticação.
+3. **Validação e Deploy**:
+   - **60 testes do frontend passando (100%) em 13 arquivos**.
+   - Build de produção gerado com sucesso via `npm run build`.
+   - Deploy publicado no Cloudflare Pages: `https://financeiro-app-6wf.pages.dev` e preview `https://45726215.financeiro-app-6wf.pages.dev`.
+   - Commit enviado para o GitHub: `8ca7dac`.
+
+### Arquivos modificados
+- `frontend/src/lib/api.ts`: Correção da interpolação do token JWT no header de autorização.
+- `backend/PROGRESSO.md` e `PROGRESSO.md`: Registro da resolução.
+
+### Pendências
+- Nenhuma pendência.
+
+---
+
+## 22. [2026-09-02 09:07] - Implementação da Rota GET /cards/:id/invoices no Backend
+
+### O que foi feito
+1. **Diagnóstico da Causa Raiz**:
+   - As chamadas `GET /cards/:id/invoices` do frontend retornavam 404 (Not Found) porque no backend a rota de listagem de faturas estava registrada apenas como `GET /workspaces/:workspaceId/cards/:cardId/invoices`.
+2. **Correções Aplicadas**:
+   - Implementado o handler universal `getCardInvoicesHandler` em `backend/src/routes/invoices.ts`, mapeado para:
+     - `GET /cards/:id/invoices`
+     - `GET /cards/:cardId/invoices`
+     - `GET /workspaces/:workspaceId/cards/:cardId/invoices`
+     - `GET /workspaces/:workspaceId/credit-cards/:cardId/invoices`
+   - A rota busca o cartão no banco através do vínculo `workspace_members` do usuário autenticado (`userId`).
+   - Se o cartão for encontrado, calcula e retorna as faturas detalhadas com status, total, datas e lançamentos.
+   - Se o cartão não tiver faturas ou não for encontrado, retorna `200 OK` com array vazio `[]`.
+   - Adicionados testes de integração em `backend/tests/invoices.test.ts`.
+3. **Validação e Deploy**:
+   - **157 testes passando no Backend (100%) em 21 arquivos**.
+   - Deploy do Cloudflare Worker realizado com sucesso: `https://backend.raimaciel.workers.dev`.
+   - Commit enviado para o GitHub: `09befc3`.
+
+### Arquivos modificados
+- `backend/src/routes/invoices.ts`: Mapeamento das rotas `GET /cards/:id/invoices` e `GET /cards/:cardId/invoices`.
+- `backend/tests/invoices.test.ts`: Testes de integração para os novos endpoints de faturas por ID de cartão.
+- `backend/PROGRESSO.md` e `PROGRESSO.md`: Registro da implementação e deploy.
+
+### Pendências
+- Nenhuma pendência.
+
+---
+
+## 23. [2026-09-02 09:56] - Filtro de Faturas Vazias em Notificações e Seleção de Fatura Atual no Card
+
+### O que foi feito
+1. **Filtro de Faturas Sem Compras em Notificações (`backend/src/utils/notificationGenerator.ts` e `backend/src/routes/notifications.ts`)**:
+   - Adicionada validação para verificar se a fatura possui compras/lançamentos reais (`transactions_count > 0` ou `total_amount > 0`).
+   - Evita a geração de notificações de "Fatura Vencida" ou "Fatura Vence em Breve" para cartões recém-cadastrados ou meses sem nenhuma despesa.
+   - Atualizados os testes unitários em `backend/tests/unit/notificationGenerator.test.ts`.
+2. **Seleção da Fatura do Mês Atual no Frontend (`frontend/src/pages/CreditCards.tsx`)**:
+   - Ajustada a lógica do `CardItem` para buscar a fatura que compreende a data de hoje (`start_date <= hoje <= closing_date`), o `reference_month` do mês corrente ou status `open`, em vez de pegar cegamente o item `invoices[0]` (que retornava a projeção mais distante no futuro).
+   - Ao abrir o modal de detalhes de faturas, a aba de faturas seleciona por padrão a fatura ativa correspondente.
+3. **Validação e Deploy**:
+   - **158 testes passando no Backend (100%) em 21 arquivos**.
+   - **60 testes passando no Frontend (100%) em 13 arquivos**.
+   - Build do Frontend e deploy no Cloudflare Pages: `https://financeiro-app-6wf.pages.dev` e preview `https://0f3ceb20.financeiro-app-6wf.pages.dev`.
+   - Deploy do Backend Worker no Cloudflare Workers: `https://backend.raimaciel.workers.dev`.
+   - Commit enviado para o GitHub: `e1b7b9e`.
+
+### Arquivos modificados
+- `backend/src/utils/notificationGenerator.ts`: Filtro de compras reais para notificações de faturas.
+- `backend/src/routes/notifications.ts`: Passagem de transações para o gerador de notificações.
+- `backend/tests/unit/notificationGenerator.test.ts`: Testes unitários para o filtro de transações.
+- `frontend/src/pages/CreditCards.tsx`: Lógica de seleção da fatura do mês atual.
+- `backend/PROGRESSO.md` e `PROGRESSO.md`: Registro da resolução.
+
+### Pendências
+- Nenhuma pendência.
+
+---
+
+## 24. [2026-09-02 13:21] - Barra de Filtros, Ordenação e Rastreabilidade de Cartões Virtuais
+
+### O que foi feito
+1. **Estrutura de Dados e Backend (`backend/src/routes/credit-cards.ts` e migração D1)**:
+   - Criada migração `0010_virtual_cards_enhancements.sql` adicionando as colunas `registered_for VARCHAR(150)` e `expires_at DATETIME` na tabela `credit_cards`.
+   - Executada a migração na base D1 remota do Cloudflare (`financeiro_db`).
+   - Expandido o enum de `card_type` para suportar `'physical' | 'virtual_permanent' | 'virtual_temporary' | 'virtual_app_linked'`.
+   - Implementada a validação que torna `registered_for` obrigatório para qualquer `card_type` que inicie com `virtual_` (garantindo rastreabilidade e segurança) e `expires_at` obrigatório para `virtual_temporary`.
+   - Atualizados endpoints GET, POST, PUT e PATCH para retornar e persistir `bank`, `registered_for`, `expires_at`.
+   - Adicionados testes de integração em `backend/tests/credit-cards.test.ts`.
+2. **Componente de Filtros e Ordenação (`frontend/src/components/CreditCardFilters.tsx`)**:
+   - Implementada a barra de filtros horizontal responsiva entre o cabeçalho e os cards:
+     - Select de **Banco** (opções dinâmicas dos bancos cadastrados + "Todos").
+     - Select de **Bandeira** (opções dinâmicas das bandeiras cadastradas + "Todas").
+     - Select de **Tipo de Cartão** (Físico, Virtual Permanente, Virtual Temporário 24h, Virtual Vinculado a App).
+     - Select de **Cadastrado em** (aparece dinamicamente se houver cartões virtuais com `registered_for`).
+     - Select de **Ordenar por** (Nome A-Z, Limite, Dia de Vencimento, Dia de Fechamento, Data de Expiração).
+     - Botão toggle de direção (`↑/↓` - crescente / decrescente).
+     - Contador dinâmico "Mostrando X de Y cartões".
+     - Botão de "Limpar Filtros" e persistência automática no `localStorage` (`credit_cards_filters`).
+     - Versão mobile com botão colapsável "Filtros e Ordenação" em Dialog.
+3. **Formulário de Criação/Edição e Visual do Card (`frontend/src/pages/CreditCards.tsx`)**:
+   - Campo "Cadastrado em / Vinculado a *" com `<datalist>` de autocompletação baseado nos cartões já cadastrados pelo usuário.
+   - Campo "Validade / Expiração *" com seletor de data/hora para cartões temporários.
+   - Badges estilizados por tipo:
+     - Físico -> `🪪 Físico`
+     - Virtual Permanente -> `♾️ Virtual` (badge azul)
+     - Virtual Temporário -> `⏱️ 24h (restam Xh)` ou `⏱️ Expirado` (badge amarelo/âmbar ou cinza com reordenação para o final)
+     - Virtual Vinculado a App -> `🔗 App / Site` (badge roxo)
+   - Exibição de `🔒 Cadastrado em: {registered_for}` logo abaixo do nome do cartão para qualquer cartão virtual.
+4. **Validação e Deploy**:
+   - **159 testes passando no Backend (100%) em 21 arquivos**.
+   - **59 testes passando no Frontend (100%) em 13 arquivos**.
+   - Build do Frontend e deploy no Cloudflare Pages: `https://financeiro-app-6wf.pages.dev` (Preview `https://28ccabfe.financeiro-app-6wf.pages.dev`).
+   - Deploy do Backend Worker no Cloudflare Workers: `https://backend.raimaciel.workers.dev` (Versão `fcb02787-bff9-4673-a92a-7f12c9f8bf33`).
+
+### Arquivos modificados
+- `backend/migrations/0010_virtual_cards_enhancements.sql`: Migração D1.
+- `backend/src/routes/credit-cards.ts`: Endpoints com suporte a rastreabilidade e expiração de virtuais.
+- `backend/tests/credit-cards.test.ts`: Testes unitários/integração de cartões virtuais.
+- `frontend/src/types/index.ts`: Tipos TypeScript `CardType` e propriedades de `CreditCard`.
+- `frontend/src/components/CreditCardFilters.tsx`: Novo componente de barra de filtros.
+- `frontend/src/pages/CreditCards.tsx`: Integração de filtros, rastreabilidade, expiração e badges.
+- `frontend/src/tests/CreditCards.test.tsx`: Testes de integração do frontend.
+- `backend/PROGRESSO.md` e `PROGRESSO.md`: Registro da implementação.
+
+### Pendências
+- Nenhuma pendência.
+
+
+
+
+
+
 
 
 

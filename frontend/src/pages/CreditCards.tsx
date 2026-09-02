@@ -1,8 +1,9 @@
-import React, { useState, useRef } from "react";
+import React, { useState, useRef, useMemo, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import api from "@/lib/api";
-import type { CreditCard, Invoice, Workspace, InvoiceForecastResponse } from "@/types";
+import type { CreditCard, CardType, Invoice, Workspace, InvoiceForecastResponse } from "@/types";
 import { BrandBadge, BRAND_ICONS } from "@/components/BrandIcons";
+import { CreditCardFilters, DEFAULT_FILTERS, type CardFilterState } from "@/components/CreditCardFilters";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -50,6 +51,11 @@ import {
   Upload,
   Image as ImageIcon,
   X,
+  Lock,
+  Clock,
+  Globe,
+  Hourglass,
+  Layers,
 } from "lucide-react";
 
 // Paleta de cores para cartões
@@ -88,6 +94,51 @@ function formatMonthYear(refMonth: string): string {
   ];
   const idx = parseInt(mm, 10) - 1;
   return `${monthNames[idx] || mm} ${yyyy}`;
+}
+
+// Helper para calcular tempo restante de cartão temporário
+function getTemporaryCardStatus(expiresAt?: string | null): {
+  isExpired: boolean;
+  label: string;
+  badgeClass: string;
+} {
+  if (!expiresAt) {
+    return { isExpired: false, label: "24h", badgeClass: "bg-amber-500/30 text-amber-200 border-amber-400/40" };
+  }
+
+  const expireTime = new Date(expiresAt).getTime();
+  const now = Date.now();
+  const diffMs = expireTime - now;
+
+  if (diffMs <= 0) {
+    return { isExpired: true, label: "Expirado", badgeClass: "bg-slate-600/60 text-slate-300 border-slate-500/40" };
+  }
+
+  const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
+  const diffMins = Math.floor((diffMs % (1000 * 60 * 60)) / (1000 * 60));
+
+  if (diffHours >= 24) {
+    const diffDays = Math.floor(diffHours / 24);
+    return {
+      isExpired: false,
+      label: `24h (restam ${diffDays}d)`,
+      badgeClass: "bg-amber-500/30 text-amber-200 border-amber-400/40",
+    };
+  }
+
+  if (diffHours > 0) {
+    return {
+      isExpired: false,
+      label: `24h (restam ${diffHours}h)`,
+      badgeClass: "bg-amber-500/30 text-amber-200 border-amber-400/40",
+    };
+  }
+
+  return {
+    isExpired: false,
+    label: `24h (restam ${diffMins}m)`,
+    badgeClass: "bg-rose-500/40 text-rose-200 border-rose-400/50 animate-pulse",
+  };
 }
 
 // Queries da API
@@ -159,12 +210,14 @@ const payInvoice = async ({
 
 interface FormState {
   name: string;
-  cardType: "physical" | "virtual";
+  cardType: CardType;
   bankName: string;
   brand: string;
   lastFourDigits: string;
   institution: string;
   cardTier: "standard" | "gold" | "platinum" | "black" | "infinite" | string;
+  registeredFor: string;
+  expiresAt: string;
   limit_amount: number | string;
   closing_day: string;
   due_day: string;
@@ -183,6 +236,8 @@ const EMPTY_FORM: FormState = {
   lastFourDigits: "",
   institution: "",
   cardTier: "standard",
+  registeredFor: "",
+  expiresAt: "",
   limit_amount: "",
   closing_day: "25",
   due_day: "5",
@@ -220,26 +275,34 @@ function CardItem({
   });
 
   const now = new Date();
-  const todayISO = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
-  const currentMonthISO = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+  const todayISO = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+  const currentMonthISO = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
 
   const currentInvoice =
     invoices.find((inv) => inv.start_date && inv.closing_date && todayISO >= inv.start_date && todayISO <= inv.closing_date) ||
     invoices.find((inv) => inv.reference_month === currentMonthISO) ||
-    invoices.find((inv) => inv.status === 'open') ||
+    invoices.find((inv) => inv.status === "open") ||
     (invoices.length > 0 ? invoices[0] : null);
-  const isVirtual = (card.cardType || card.card_type) === "virtual";
+
+  const rawCardType = (card.cardType || card.card_type || "physical") as CardType;
+  const isVirtual = rawCardType.startsWith("virtual") || rawCardType === "virtual";
+  const registeredFor = card.registered_for || card.registeredFor;
+  const expiresAt = card.expires_at || card.expiresAt;
   const tier = card.cardTier || card.card_tier || "standard";
-  const bankName = card.bankName || card.bank_name;
+  const bankName = card.bankName || card.bank_name || card.bank;
   const last4 = card.lastFourDigits || card.last_four_digits;
   const hasImage = !!(card.card_image_url || card.cardImageUrl || card.image_url || card.imageUrl);
   const cardImageSrc = card.imageUrl || card.image_url || (card.card_image_url ? `/cards/${card.id}/image` : null);
+
+  const tempStatus = rawCardType === "virtual_temporary" ? getTemporaryCardStatus(expiresAt) : null;
 
   return (
     <div className="flex flex-col gap-2">
       <div
         onClick={() => onOpenInvoices(card)}
-        className="relative rounded-2xl p-5 shadow-lg flex flex-col justify-between min-h-[190px] transition-all hover:-translate-y-1 hover:shadow-xl cursor-pointer group select-none overflow-hidden"
+        className={`relative rounded-2xl p-5 shadow-lg flex flex-col justify-between min-h-[210px] transition-all hover:-translate-y-1 hover:shadow-xl cursor-pointer group select-none overflow-hidden ${
+          tempStatus?.isExpired ? "opacity-75 grayscale-[30%]" : ""
+        }`}
         style={{
           backgroundColor: bg,
           color: hasImage ? "#ffffff" : textColor,
@@ -288,8 +351,27 @@ function CardItem({
             <h3 className="text-lg font-bold tracking-tight truncate max-w-[180px] drop-shadow-xs">
               {card.name}
             </h3>
+
+            {/* Rastreabilidade de Cartão Virtual (🔒 Cadastrado em: ...) */}
+            {isVirtual && registeredFor && (
+              <div
+                className="inline-flex items-center gap-1.5 px-2 py-0.5 mt-1 rounded-md text-[11px] font-semibold border backdrop-blur-md shadow-2xs max-w-[210px] truncate"
+                style={{
+                  backgroundColor: "rgba(0, 0, 0, 0.35)",
+                  borderColor: "rgba(255, 255, 255, 0.25)",
+                  color: "#ffffff",
+                }}
+                title={`Cadastrado em: ${registeredFor}`}
+              >
+                <Lock className="h-3 w-3 text-emerald-400 shrink-0" />
+                <span className="truncate">
+                  Cadastrado em: <strong>{registeredFor}</strong>
+                </span>
+              </div>
+            )}
+
             {bankName && (
-              <p className="text-xs font-medium flex items-center gap-1 mt-0.5 opacity-90 drop-shadow-xs">
+              <p className="text-xs font-medium flex items-center gap-1 mt-1 opacity-90 drop-shadow-xs">
                 <Building2 className="h-3 w-3 inline opacity-90" />
                 {bankName}
               </p>
@@ -297,16 +379,39 @@ function CardItem({
           </div>
 
           <div className="flex items-center gap-1.5">
-            <span
-              className="text-[11px] font-semibold px-2 py-0.5 rounded-full border shadow-2xs backdrop-blur-xs flex items-center gap-1"
-              style={{
-                backgroundColor: "rgba(255, 255, 255, 0.2)",
-                borderColor: "rgba(255, 255, 255, 0.3)",
-                color: hasImage ? "#ffffff" : textColor,
-              }}
-            >
-              {isVirtual ? "💳 Virtual" : "🏦 Físico"}
-            </span>
+            {/* Badge de Tipo de Cartão Específico */}
+            {rawCardType === "virtual_permanent" && (
+              <span className="text-[10px] font-bold px-2 py-0.5 rounded-full border bg-blue-500/30 text-blue-100 border-blue-400/40 backdrop-blur-xs flex items-center gap-1">
+                ♾️ Virtual
+              </span>
+            )}
+            {rawCardType === "virtual_temporary" && (
+              <span
+                className={`text-[10px] font-bold px-2 py-0.5 rounded-full border backdrop-blur-xs flex items-center gap-1 ${
+                  tempStatus?.badgeClass || "bg-amber-500/30 text-amber-200 border-amber-400/40"
+                }`}
+              >
+                ⏱️ {tempStatus?.label || "24h"}
+              </span>
+            )}
+            {rawCardType === "virtual_app_linked" && (
+              <span className="text-[10px] font-bold px-2 py-0.5 rounded-full border bg-purple-500/30 text-purple-100 border-purple-400/40 backdrop-blur-xs flex items-center gap-1">
+                🔗 App / Site
+              </span>
+            )}
+            {(rawCardType === "physical" || rawCardType === "virtual") && (
+              <span
+                className="text-[11px] font-semibold px-2 py-0.5 rounded-full border shadow-2xs backdrop-blur-xs flex items-center gap-1"
+                style={{
+                  backgroundColor: "rgba(255, 255, 255, 0.2)",
+                  borderColor: "rgba(255, 255, 255, 0.3)",
+                  color: hasImage ? "#ffffff" : textColor,
+                }}
+              >
+                {rawCardType === "virtual" ? "💳 Virtual" : "🪪 Físico"}
+              </span>
+            )}
+
             <DropdownMenu>
               <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}>
                 <button
@@ -410,6 +515,33 @@ export default function CreditCards() {
   const [selectedWorkspaceId, setSelectedWorkspaceId] = useState<string>("");
   const [toast, setToast] = useState<ToastState | null>(null);
 
+  // Filtros com persistência no LocalStorage
+  const [filters, setFilters] = useState<CardFilterState>(() => {
+    try {
+      const saved = typeof window !== "undefined" && window.localStorage ? window.localStorage.getItem("credit_cards_filters") : null;
+      if (saved) {
+        return { ...DEFAULT_FILTERS, ...JSON.parse(saved) };
+      }
+    } catch (e) {
+      console.warn("Erro ao recuperar filtros salvos:", e);
+    }
+    return DEFAULT_FILTERS;
+  });
+
+  const handleFilterChange = (updater: CardFilterState | ((prev: CardFilterState) => CardFilterState)) => {
+    setFilters((prev) => {
+      const next = typeof updater === "function" ? updater(prev) : updater;
+      try {
+        if (typeof window !== "undefined" && window.localStorage) {
+          window.localStorage.setItem("credit_cards_filters", JSON.stringify(next));
+        }
+      } catch (e) {
+        console.warn("Erro ao salvar filtros no localStorage:", e);
+      }
+      return next;
+    });
+  };
+
   // Modais de Cartão
   const [modalOpen, setModalOpen] = useState(false);
   const [formMode, setFormMode] = useState<FormMode>("create");
@@ -434,7 +566,7 @@ export default function CreditCards() {
     queryFn: fetchWorkspaces,
   });
 
-  React.useEffect(() => {
+  useEffect(() => {
     if (workspaces.length > 0 && !selectedWorkspaceId) {
       setSelectedWorkspaceId(workspaces[0].id);
     }
@@ -456,17 +588,17 @@ export default function CreditCards() {
   });
 
   // Seleciona a fatura do mês atual por padrão quando as faturas do modal carregam
-  React.useEffect(() => {
+  useEffect(() => {
     if (invoices.length > 0) {
       const now = new Date();
-      const todayISO = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
-      const currentMonthISO = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+      const todayISO = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+      const currentMonthISO = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
 
       const activeIdx = invoices.findIndex(
         (inv) =>
           (inv.start_date && inv.closing_date && todayISO >= inv.start_date && todayISO <= inv.closing_date) ||
           inv.reference_month === currentMonthISO ||
-          inv.status === 'open'
+          inv.status === "open"
       );
       if (activeIdx !== -1) {
         setSelectedInvoiceIndex(activeIdx);
@@ -483,6 +615,108 @@ export default function CreditCards() {
   });
 
   const selectedInvoice: Invoice | null = invoices[selectedInvoiceIndex] ?? null;
+
+  // Sugestões de "Cadastrado em" baseadas em cartões anteriores do usuário
+  const existingRegisteredForSuggestions = useMemo(() => {
+    const list = cards
+      .map((c) => c.registered_for || c.registeredFor)
+      .filter((r): r is string => !!r && r.trim() !== "");
+    return Array.from(new Set(list)).sort((a, b) => a.localeCompare(b));
+  }, [cards]);
+
+  // Filtragem e Ordenação com useMemo
+  const filteredAndSortedCards = useMemo(() => {
+    const nowTime = Date.now();
+
+    const filtered = cards.filter((card) => {
+      // 1. Busca textual
+      if (filters.search.trim() !== "") {
+        const query = filters.search.toLowerCase().trim();
+        const nameMatch = card.name.toLowerCase().includes(query);
+        const bankMatch = (card.bank_name || card.bankName || card.bank || "").toLowerCase().includes(query);
+        const regMatch = (card.registered_for || card.registeredFor || "").toLowerCase().includes(query);
+        const last4Match = (card.last_four_digits || card.lastFourDigits || "").includes(query);
+        if (!nameMatch && !bankMatch && !regMatch && !last4Match) return false;
+      }
+
+      // 2. Banco
+      if (filters.bank !== "all") {
+        const cardBank = card.bank_name || card.bankName || card.bank || "";
+        if (cardBank !== filters.bank) return false;
+      }
+
+      // 3. Bandeira
+      if (filters.brand !== "all") {
+        if ((card.brand || "") !== filters.brand) return false;
+      }
+
+      // 4. Tipo de Cartão
+      if (filters.cardType !== "all") {
+        const type = card.card_type || card.cardType || "physical";
+        if (filters.cardType === "physical") {
+          if (type !== "physical") return false;
+        } else if (filters.cardType === "virtual_permanent") {
+          if (type !== "virtual_permanent" && type !== "virtual") return false;
+        } else if (filters.cardType === "virtual_temporary") {
+          if (type !== "virtual_temporary") return false;
+        } else if (filters.cardType === "virtual_app_linked") {
+          if (type !== "virtual_app_linked") return false;
+        }
+      }
+
+      // 5. Cadastrado em
+      if (filters.registeredFor !== "all") {
+        const reg = card.registered_for || card.registeredFor || "";
+        if (reg !== filters.registeredFor) return false;
+      }
+
+      return true;
+    });
+
+    // Ordenação
+    return [...filtered].sort((a, b) => {
+      const isTemporaryA = (a.card_type || a.cardType) === "virtual_temporary";
+      const isTemporaryB = (b.card_type || b.cardType) === "virtual_temporary";
+      const expiresAtA = a.expires_at || a.expiresAt;
+      const expiresAtB = b.expires_at || b.expiresAt;
+
+      const isExpiredA = isTemporaryA && !!expiresAtA && new Date(expiresAtA).getTime() < nowTime;
+      const isExpiredB = isTemporaryB && !!expiresAtB && new Date(expiresAtB).getTime() < nowTime;
+
+      // Se um dos cartões for temporário expirado, vai para o final da lista (exceto se ordenação for por expiração)
+      if (filters.sortBy !== "expires_at") {
+        if (isExpiredA && !isExpiredB) return 1;
+        if (!isExpiredA && isExpiredB) return -1;
+      }
+
+      let comparison = 0;
+
+      switch (filters.sortBy) {
+        case "name":
+          comparison = a.name.localeCompare(b.name, "pt-BR");
+          break;
+        case "limit":
+          comparison = Number(a.limit_amount ?? 0) - Number(b.limit_amount ?? 0);
+          break;
+        case "due_day":
+          comparison = Number(a.due_day ?? 0) - Number(b.due_day ?? 0);
+          break;
+        case "closing_day":
+          comparison = Number(a.closing_day ?? 0) - Number(b.closing_day ?? 0);
+          break;
+        case "expires_at": {
+          const dateA = expiresAtA ? new Date(expiresAtA).getTime() : Infinity;
+          const dateB = expiresAtB ? new Date(expiresAtB).getTime() : Infinity;
+          comparison = dateA - dateB;
+          break;
+        }
+        default:
+          comparison = 0;
+      }
+
+      return filters.sortDir === "asc" ? comparison : -comparison;
+    });
+  }, [cards, filters]);
 
   const deleteMutation = useMutation({
     mutationFn: deleteCard,
@@ -510,7 +744,14 @@ export default function CreditCards() {
   });
 
   const openCreate = () => {
-    setForm(EMPTY_FORM);
+    // Default de expiração: 24 horas a partir de agora no formato datetime-local (YYYY-MM-DDTHH:mm)
+    const in24h = new Date(Date.now() + 24 * 60 * 60 * 1000);
+    const in24hISO = in24h.toISOString().slice(0, 16);
+
+    setForm({
+      ...EMPTY_FORM,
+      expiresAt: in24hISO,
+    });
     setFormError("");
     setFormMode("create");
     setEditingId(null);
@@ -519,14 +760,27 @@ export default function CreditCards() {
 
   const openEdit = (card: CreditCard) => {
     const existingImg = card.imageUrl || card.image_url || (card.card_image_url ? `/cards/${card.id}/image` : null);
+    const rawType = (card.cardType || card.card_type || "physical") as CardType;
+
+    let expiresFormatted = "";
+    if (card.expires_at || card.expiresAt) {
+      try {
+        expiresFormatted = new Date(card.expires_at || card.expiresAt!).toISOString().slice(0, 16);
+      } catch {
+        expiresFormatted = "";
+      }
+    }
+
     setForm({
       name: card.name,
-      cardType: card.cardType || card.card_type || "physical",
-      bankName: card.bankName || card.bank_name || "",
+      cardType: rawType,
+      bankName: card.bankName || card.bank_name || card.bank || "",
       brand: card.brand ?? "",
       lastFourDigits: card.lastFourDigits || card.last_four_digits || "",
       institution: card.institution || "",
       cardTier: card.cardTier || card.card_tier || "standard",
+      registeredFor: card.registered_for || card.registeredFor || "",
+      expiresAt: expiresFormatted,
       limit_amount: card.limit_amount ?? "",
       closing_day: String(card.closing_day),
       due_day: String(card.due_day),
@@ -553,7 +807,6 @@ export default function CreditCards() {
 
   const handleOpenInvoices = (card: CreditCard) => {
     setInvoicesCard(card);
-    setSelectedInvoiceIndex(0);
     setInvoiceTab("invoices");
   };
 
@@ -597,12 +850,27 @@ export default function CreditCards() {
     }
   };
 
+  const isVirtualSelected = form.cardType.startsWith("virtual") || form.cardType === "virtual";
+  const isTemporarySelected = form.cardType === "virtual_temporary";
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setFormError("");
 
     if (!form.name.trim()) {
       setFormError("O nome do cartão é obrigatório.");
+      return;
+    }
+
+    // Validação obrigatória de "Cadastrado em" para qualquer cartão virtual
+    if (isVirtualSelected && !form.registeredFor.trim()) {
+      setFormError("O campo 'Cadastrado em / Vinculado a' é obrigatório para cartões virtuais (ex: Netflix, Amazon, Uber).");
+      return;
+    }
+
+    // Validação obrigatória de expiração para cartões temporários
+    if (isTemporarySelected && !form.expiresAt.trim()) {
+      setFormError("O campo 'Validade / Expiração' é obrigatório para cartões temporários.");
       return;
     }
 
@@ -626,7 +894,7 @@ export default function CreditCards() {
 
     const limitAmount = typeof form.limit_amount === "number" ? form.limit_amount : Number(String(form.limit_amount || 0).replace(",", "."));
 
-    const payload = {
+    const payload: Partial<CreditCard> = {
       name: form.name.trim(),
       cardType: form.cardType,
       bankName: form.bankName ? form.bankName.trim() : undefined,
@@ -634,6 +902,8 @@ export default function CreditCards() {
       lastFourDigits: form.lastFourDigits ? form.lastFourDigits.trim() : undefined,
       institution: form.institution ? form.institution.trim() : undefined,
       cardTier: form.cardTier,
+      registeredFor: isVirtualSelected ? form.registeredFor.trim() : undefined,
+      expiresAt: isTemporarySelected && form.expiresAt ? new Date(form.expiresAt).toISOString() : undefined,
       limit_amount: limitAmount,
       closing_day: closingDay,
       due_day: dueDay,
@@ -679,7 +949,14 @@ export default function CreditCards() {
   };
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-5">
+      {/* Datalist para autocomplete de sugestões em cartões virtuais */}
+      <datalist id="registered-for-suggestions">
+        {existingRegisteredForSuggestions.map((item) => (
+          <option key={item} value={item} />
+        ))}
+      </datalist>
+
       {/* Toast */}
       {toast && (
         <div
@@ -699,7 +976,7 @@ export default function CreditCards() {
             Cartões de Crédito e Faturas
           </h1>
           <p className="text-sm text-muted-foreground mt-1">
-            Controle limites, identificação, datas de fechamento/vencimento, faturas abertas e previsão de compras parceladas.
+            Controle limites, identificação, cartões virtuais vinculados a apps, faturas abertas e previsões futuras.
           </p>
         </div>
 
@@ -729,6 +1006,17 @@ export default function CreditCards() {
         </div>
       </div>
 
+      {/* BARRA DE FILTROS E ORDENAÇÃO */}
+      {cards.length > 0 && (
+        <CreditCardFilters
+          cards={cards}
+          filters={filters}
+          onFilterChange={handleFilterChange}
+          filteredCount={filteredAndSortedCards.length}
+          totalCount={cards.length}
+        />
+      )}
+
       {/* Listagem de Cartões */}
       {loadingCards ? (
         <div className="flex items-center justify-center py-20">
@@ -749,9 +1037,25 @@ export default function CreditCards() {
             <Plus className="h-4 w-4" /> Cadastrar Cartão
           </Button>
         </Card>
+      ) : filteredAndSortedCards.length === 0 ? (
+        <Card className="p-10 text-center text-slate-400 border border-dashed">
+          <Layers className="h-8 w-8 mx-auto text-slate-300 mb-2" />
+          <p className="font-semibold text-slate-700">Nenhum cartão encontrado com os filtros selecionados</p>
+          <p className="text-xs text-slate-400 mt-1">
+            Tente alterar ou limpar os filtros para ver todos os cartões cadastrados.
+          </p>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => handleFilterChange(DEFAULT_FILTERS)}
+            className="mt-3 text-xs"
+          >
+            Limpar Filtros
+          </Button>
+        </Card>
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
-          {cards.map((card) => (
+          {filteredAndSortedCards.map((card) => (
             <CardItem
               key={card.id}
               card={card}
@@ -772,7 +1076,7 @@ export default function CreditCards() {
               {formMode === "create" ? "Novo Cartão de Crédito" : "Editar Cartão de Crédito"}
             </DialogTitle>
             <DialogDescription>
-              Configure os dados de identificação, limite e os dias de fechamento e vencimento da fatura.
+              Configure identificação, tipo (físico ou virtual), limite e dias de fechamento/vencimento.
             </DialogDescription>
           </DialogHeader>
 
@@ -783,12 +1087,12 @@ export default function CreditCards() {
           )}
 
           <form onSubmit={handleSubmit} className="space-y-3.5 py-1">
-            {/* 1. Nome do Cartão (Largura total) */}
+            {/* 1. Nome do Cartão */}
             <div className="space-y-1.5">
               <Label htmlFor="card-name">Nome do Cartão *</Label>
               <Input
                 id="card-name"
-                placeholder="Ex: Nubank Ultravioleta, Itaú Personnalité"
+                placeholder="Ex: Nubank Ultravioleta, Itaú Personnalité, Cartão Uber"
                 value={form.name}
                 onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
               />
@@ -800,14 +1104,16 @@ export default function CreditCards() {
                 <Label htmlFor="card-type">Tipo de Cartão</Label>
                 <Select
                   value={form.cardType}
-                  onValueChange={(val: "physical" | "virtual") => setForm((f) => ({ ...f, cardType: val }))}
+                  onValueChange={(val: CardType) => setForm((f) => ({ ...f, cardType: val }))}
                 >
                   <SelectTrigger id="card-type" className="bg-white">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="physical">🏦 Físico</SelectItem>
-                    <SelectItem value="virtual">💳 Virtual</SelectItem>
+                    <SelectItem value="physical">🪪 Físico</SelectItem>
+                    <SelectItem value="virtual_permanent">♾️ Virtual Permanente</SelectItem>
+                    <SelectItem value="virtual_temporary">⏱️ Virtual Temporário (24h)</SelectItem>
+                    <SelectItem value="virtual_app_linked">🔗 Virtual Vinculado a App/Site</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -831,6 +1137,47 @@ export default function CreditCards() {
                 </Select>
               </div>
             </div>
+
+            {/* RASTREABILIDADE DE VIRTUAL: Cadastrado em / Vinculado a (Obrigatório se virtual) */}
+            {isVirtualSelected && (
+              <div className="p-3 rounded-lg bg-indigo-50/70 border border-indigo-100 space-y-2 animate-in fade-in-50">
+                <div className="space-y-1.5">
+                  <Label htmlFor="card-registered-for" className="text-xs font-bold text-indigo-950 flex items-center gap-1.5">
+                    <Lock className="h-3.5 w-3.5 text-indigo-600" /> Cadastrado em / Vinculado a *
+                  </Label>
+                  <Input
+                    id="card-registered-for"
+                    list="registered-for-suggestions"
+                    placeholder="Ex: Netflix, Amazon, Uber, iFood, Loja XPTO"
+                    value={form.registeredFor}
+                    onChange={(e) => setForm((f) => ({ ...f, registeredFor: e.target.value }))}
+                    className="bg-white"
+                  />
+                  <p className="text-[11px] text-indigo-700">
+                    🔒 Segurança: registre o site ou aplicativo onde este cartão virtual está em uso para rastreabilidade rápida.
+                  </p>
+                </div>
+
+                {/* Se for temporário, campo de Expiração */}
+                {isTemporarySelected && (
+                  <div className="space-y-1.5 pt-2 border-t border-indigo-100/80">
+                    <Label htmlFor="card-expires-at" className="text-xs font-bold text-indigo-950 flex items-center gap-1.5">
+                      <Clock className="h-3.5 w-3.5 text-amber-600" /> Validade / Expira em *
+                    </Label>
+                    <Input
+                      id="card-expires-at"
+                      type="datetime-local"
+                      value={form.expiresAt}
+                      onChange={(e) => setForm((f) => ({ ...f, expiresAt: e.target.value }))}
+                      className="bg-white"
+                    />
+                    <p className="text-[11px] text-amber-700">
+                      ⏱️ Cartão de 24h ou compra única: após expirar, será marcado automaticamente como "Expirado".
+                    </p>
+                  </div>
+                )}
+              </div>
+            )}
 
             {/* 3. Grid 2 colunas: Banco / Emissor + Bandeira */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -977,7 +1324,7 @@ export default function CreditCards() {
               </div>
             </div>
 
-            {/* 7. Foto do Cartão (Upload de Imagem Opcional) */}
+            {/* 7. Foto do Cartão */}
             <div className="space-y-2 pt-1 border-t border-slate-100">
               <Label htmlFor="card-photo" className="flex items-center gap-1.5 text-xs font-semibold">
                 <ImageIcon className="h-3.5 w-3.5 text-primary" /> Foto / Imagem do Cartão (Opcional)
