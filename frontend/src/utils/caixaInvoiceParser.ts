@@ -1,41 +1,7 @@
-/**
- * Parser de extração de faturas de cartão de crédito (padrão Caixa Econômica Federal e similares).
- * 
- * Regras:
- * - Extrai linhas no padrão: DD/MM DESCRIÇÃO VALOR(D|C)
- * - Identifica o mês/ano de referência da fatura no cabeçalho (competência)
- * - Associa o número do cartão via padrão (Cartão XXXX)
- * - Extrai os últimos 4 dígitos para vinculação automática
- * - Preserva a descrição completa sem truncamento (inclusive parcelas "03 DE 03" e cidades)
- * - NUNCA infere o ano automaticamente se não houver no cabeçalho: retorna dataTransacao "DD/MM" e precisaRevisao: true
- */
+import type { RawExtractedTransaction, RawInvoiceHeader, NormalizedImportTransaction } from './invoiceCompetenceEngine';
+import { normalizeInvoiceTransactions } from './invoiceCompetenceEngine';
 
-export interface CaixaExtractedTransaction {
-	id?: string;
-	dataTransacao: string; // "DD/MM" - Data impressa na linha (compra original)
-	dataParcial: string; // "DD/MM" - Compatibilidade
-	dataCompetencia?: string; // "YYYY-MM-DD" - Data baseada no mês/ano de competência da fatura
-	mesReferenciaFatura?: string; // "YYYY-MM"
-	anoFatura?: number;
-	mesFatura?: number;
-	descricao: string; // Descrição integral do lançamento (sem truncamento)
-	valor: number; // Valor numérico positivo (ex: 154.30)
-	tipo: 'D' | 'C'; // 'D' (Débito) ou 'C' (Crédito / Pagamento / Estorno)
-	cartao: string; // Identificador do cartão no PDF (ex: "Cartão 2583")
-	cartaoDigitos?: string | null; // Últimos 4 dígitos extraídos (ex: "2583")
-	creditCardId?: string | null; // ID vinculado do banco
-	cartaoIdentificado?: boolean;
-	cardLabel?: string;
-	precisaRevisao: true;
-}
-
-export interface CaixaInvoiceReference {
-	mesReferencia?: string; // "YYYY-MM"
-	ano?: number;
-	mes?: number;
-	dataVencimento?: string; // "YYYY-MM-DD"
-	descricaoReferencia?: string;
-}
+export { type RawExtractedTransaction, type RawInvoiceHeader, type NormalizedImportTransaction };
 
 const MONTH_NAMES_MAP: Record<string, number> = {
 	janeiro: 1,
@@ -91,18 +57,19 @@ const IGNORED_LINE_PATTERNS = [
 
 const CARD_HEADER_REGEX = /(?:\(?\s*Cart[aã]o(?:\s*[:\-])?\s+(?:[\w\*]+\s+)*(\d{4}|\d+)\s*\)?)/i;
 const TRANSACTION_REGEX = /^(\d{2}\/\d{2})\s+(.+?)\s+([0-9]{1,3}(?:\.[0-9]{3})*,[0-9]{2})\s*([DCdc])?$/;
+const INSTALLMENT_REGEX = /(?:PARC(?:ELA)?\.?\s*|\s+|\()(\d{1,2})\s*(?:\/|\s+DE\s+)\s*(\d{1,2})\)?/i;
 
 /**
- * Detecta o mês/ano de competência e vencimento da fatura a partir do texto do cabeçalho.
+ * Extrai o cabeçalho bruto da fatura Caixa (Mês/Ano de referência e Vencimento).
  */
-export function detectInvoiceReference(pdfText: string): CaixaInvoiceReference {
+export function extractInvoiceHeader(pdfText: string): RawInvoiceHeader {
 	if (!pdfText || typeof pdfText !== 'string') {
-		return {};
+		return { sourceBank: 'caixa', bankName: 'Caixa Econômica Federal' };
 	}
 
 	const lines = pdfText.split(/\r?\n/).slice(0, 40).map((l) => l.trim()).filter(Boolean);
 
-	// 1. Padrão Vencimento: "Vencimento: 10/09/2026" ou "Vencimento 15/09/2026" ou "Pagar até 10/09/2026"
+	// 1. Vencimento: "Vencimento: 10/09/2026"
 	const vencimentoRegex = /(?:vencimento|pagar\s+at[eé]|vence\s+em)[\s\-:]+(\d{2})\/(\d{2})\/(\d{4})/i;
 	for (const line of lines) {
 		const match = line.match(vencimentoRegex);
@@ -112,17 +79,18 @@ export function detectInvoiceReference(pdfText: string): CaixaInvoiceReference {
 			const year = parseInt(match[3], 10);
 			if (month >= 1 && month <= 12 && year >= 1970 && year <= 2100) {
 				return {
-					mesReferencia: `${year}-${String(month).padStart(2, '0')}`,
-					ano: year,
-					mes: month,
-					dataVencimento: `${year}-${String(month).padStart(2, '0')}-${day.padStart(2, '0')}`,
-					descricaoReferencia: `Fatura ${match[2]}/${year} (Vencimento ${day}/${match[2]}/${year})`,
+					invoiceReferenceMonth: `${year}-${String(month).padStart(2, '0')}`,
+					invoiceYear: year,
+					invoiceMonth: month,
+					invoiceDueDate: `${year}-${String(month).padStart(2, '0')}-${day.padStart(2, '0')}`,
+					sourceBank: 'caixa',
+					bankName: 'Caixa Econômica Federal',
 				};
 			}
 		}
 	}
 
-	// 2. Padrão Fatura [Mês] [Ano]: "Fatura Setembro 2026", "Fatura de Setembro de 2026", "Fatura 09/2026"
+	// 2. Fatura [Mês] [Ano]: "Fatura Setembro 2026"
 	const faturaNomeMesRegex = /(?:fatura|demonstrativo|refer[eê]ncia)[\s\-:]+(?:de\s+)?([a-zA-ZçÇ]{3,9})\b(?:\s+(?:de\s+)?(\d{4}))?/i;
 	for (const line of lines) {
 		const match = line.match(faturaNomeMesRegex);
@@ -132,16 +100,17 @@ export function detectInvoiceReference(pdfText: string): CaixaInvoiceReference {
 			const year = match[2] ? parseInt(match[2], 10) : new Date().getFullYear();
 			if (monthNum) {
 				return {
-					mesReferencia: `${year}-${String(monthNum).padStart(2, '0')}`,
-					ano: year,
-					mes: monthNum,
-					descricaoReferencia: `Fatura ${match[1]} ${year}`,
+					invoiceReferenceMonth: `${year}-${String(monthNum).padStart(2, '0')}`,
+					invoiceYear: year,
+					invoiceMonth: monthNum,
+					sourceBank: 'caixa',
+					bankName: 'Caixa Econômica Federal',
 				};
 			}
 		}
 	}
 
-	// 3. Padrão Fatura MM/AAAA: "Fatura 09/2026" ou "09/2026"
+	// 3. Fatura MM/AAAA: "Fatura 09/2026"
 	const faturaNumMesRegex = /(?:fatura|demonstrativo|refer[eê]ncia)[\s\-:]+(\d{2})\/(\d{4})/i;
 	for (const line of lines) {
 		const match = line.match(faturaNumMesRegex);
@@ -150,55 +119,34 @@ export function detectInvoiceReference(pdfText: string): CaixaInvoiceReference {
 			const year = parseInt(match[2], 10);
 			if (month >= 1 && month <= 12) {
 				return {
-					mesReferencia: `${year}-${String(month).padStart(2, '0')}`,
-					ano: year,
-					mes: month,
-					descricaoReferencia: `Fatura ${match[1]}/${year}`,
+					invoiceReferenceMonth: `${year}-${String(month).padStart(2, '0')}`,
+					invoiceYear: year,
+					invoiceMonth: month,
+					sourceBank: 'caixa',
+					bankName: 'Caixa Econômica Federal',
 				};
 			}
 		}
 	}
 
-	// 4. Padrão Melhor data para compra / Fechamento: "Melhor data para compra: 03/09/2026"
-	const melhorDataRegex = /(?:melhor\s+data\s+para\s+compra|data\s+de\s+fechamento)[\s\-:]+(\d{2})\/(\d{2})\/(\d{4})/i;
-	for (const line of lines) {
-		const match = line.match(melhorDataRegex);
-		if (match) {
-			const month = parseInt(match[2], 10);
-			const year = parseInt(match[3], 10);
-			if (month >= 1 && month <= 12) {
-				return {
-					mesReferencia: `${year}-${String(month).padStart(2, '0')}`,
-					ano: year,
-					mes: month,
-					descricaoReferencia: `Fatura ${match[2]}/${year}`,
-				};
-			}
-		}
-	}
-
-	return {};
+	return { sourceBank: 'caixa', bankName: 'Caixa Econômica Federal' };
 }
 
 /**
- * Extrai transações preservando 100% da descrição (Bug 1),
- * associando data de competência da fatura (Bug 2),
- * e identificando os 4 últimos dígitos do cartão (Bug 3).
+ * Extrai transações brutas da fatura Caixa.
  */
-export function extractTransactions(pdfText: string): CaixaExtractedTransaction[] {
+export function extractRawTransactions(pdfText: string): RawExtractedTransaction[] {
 	if (!pdfText || typeof pdfText !== 'string') {
 		return [];
 	}
 
-	const invoiceRef = detectInvoiceReference(pdfText);
 	const lines = pdfText.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
-	const transactions: CaixaExtractedTransaction[] = [];
+	const rawTransactions: RawExtractedTransaction[] = [];
 
 	let currentCardLabel = 'Cartão Principal';
 	let currentCardDigits: string | null = null;
 
 	for (const line of lines) {
-		// 1. Detectar cabeçalho ou troca de cartão (ex: "(Cartão 2583)" ou "(Cartão 2424)")
 		const cardMatch = line.match(CARD_HEADER_REGEX);
 		if (cardMatch) {
 			const cardNum = cardMatch[1];
@@ -211,58 +159,80 @@ export function extractTransactions(pdfText: string): CaixaExtractedTransaction[
 			}
 		}
 
-		// 2. Ignorar linhas de dados pessoais, totalizadores e cabeçalhos fixos
 		if (IGNORED_LINE_PATTERNS.some((rx) => rx.test(line))) {
 			continue;
 		}
 
-		// 3. Casar padrão de transação: DD/MM DESCRIÇÃO VALOR(D|C)
 		const match = line.match(TRANSACTION_REGEX);
 		if (match) {
-			const dataTransacao = match[1]; // "06/06" (data original da compra)
-			const rawDesc = match[2].trim(); // "NORMATEL HOME CENTER 03 DE 03 FORTALEZA" (completo!)
+			const originalDate = match[1]; // "06/06" (data original da compra)
+			const description = match[2].trim(); // "NORMATEL HOME CENTER 03 DE 03 FORTALEZA"
 			const rawValor = match[3];
 			const rawTipo = (match[4] || 'D').toUpperCase();
 
-			// Ignorar se a própria descrição for um totalizador
-			if (IGNORED_LINE_PATTERNS.some((rx) => rx.test(rawDesc))) {
+			if (IGNORED_LINE_PATTERNS.some((rx) => rx.test(description))) {
 				continue;
 			}
 
-			// Converter valor brasileiro (1.234,56 -> 1234.56)
-			const valor = parseFloat(rawValor.replace(/\./g, '').replace(',', '.'));
-			if (isNaN(valor) || valor <= 0) {
+			const amount = parseFloat(rawValor.replace(/\./g, '').replace(',', '.'));
+			if (isNaN(amount) || amount <= 0) {
 				continue;
 			}
 
-			const tipo: 'D' | 'C' = rawTipo === 'C' ? 'C' : 'D';
+			const type: 'D' | 'C' = rawTipo === 'C' ? 'C' : 'D';
 
-			// Calcular data de competência baseada no mês/ano da fatura (Bug 2)
-			let dataCompetencia: string | undefined = undefined;
-			if (invoiceRef.ano && invoiceRef.mes) {
-				const dayPart = dataTransacao.split('/')[0].padStart(2, '0');
-				const monthPart = String(invoiceRef.mes).padStart(2, '0');
-				const yearPart = invoiceRef.ano;
-				dataCompetencia = `${yearPart}-${monthPart}-${dayPart}`;
+			// Detecção de parcelas se houver
+			let installmentInfo: { current: number; total: number } | null = null;
+			const instMatch = description.match(INSTALLMENT_REGEX);
+			if (instMatch) {
+				const current = parseInt(instMatch[1], 10);
+				const total = parseInt(instMatch[2], 10);
+				if (total >= 1 && total <= 99 && current <= total) {
+					installmentInfo = { current, total };
+				}
 			}
 
-			transactions.push({
-				id: typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : undefined,
-				dataTransacao,
-				dataParcial: dataTransacao,
-				dataCompetencia,
-				mesReferenciaFatura: invoiceRef.mesReferencia,
-				anoFatura: invoiceRef.ano,
-				mesFatura: invoiceRef.mes,
-				descricao: rawDesc, // Preserva 100% da descrição
-				valor,
-				tipo,
-				cartao: currentCardLabel,
-				cartaoDigitos: currentCardDigits,
-				precisaRevisao: true,
+			rawTransactions.push({
+				description,
+				amount,
+				type,
+				originalDate,
+				cardLastDigits: currentCardDigits,
+				cardLabel: currentCardLabel,
+				installmentInfo,
+				sourceBank: 'caixa',
 			});
 		}
 	}
 
-	return transactions;
+	return rawTransactions;
+}
+
+/**
+ * Função de compatibilidade: extrai e normaliza transações da fatura Caixa.
+ */
+export function extractTransactions(pdfText: string): any[] {
+	const header = extractInvoiceHeader(pdfText);
+	const raw = extractRawTransactions(pdfText);
+	const normalized = normalizeInvoiceTransactions(raw, header);
+	return normalized.transactions.map((t) => ({
+		...t,
+		dataParcial: t.dataTransacao,
+		anoFatura: normalized.anoFatura,
+		mesFatura: normalized.mesFatura,
+		cartao: t.cardLabel,
+		valor: t.amount,
+		tipo: t.tipo,
+		descricao: t.description,
+	}));
+}
+
+export function detectInvoiceReference(pdfText: string) {
+	const header = extractInvoiceHeader(pdfText);
+	return {
+		mesReferencia: header.invoiceReferenceMonth,
+		ano: header.invoiceYear,
+		mes: header.invoiceMonth,
+		dataVencimento: header.invoiceDueDate,
+	};
 }

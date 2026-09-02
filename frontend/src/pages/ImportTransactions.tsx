@@ -14,7 +14,8 @@ import {
   parseTransactionsFromText,
   detectReferenceYear,
 } from "@/utils/pdfParser";
-import { extractTransactions as extractCaixaTransactions, detectInvoiceReference } from "@/utils/caixaInvoiceParser";
+import { extractRawTransactions, extractInvoiceHeader } from "@/utils/caixaInvoiceParser";
+import { normalizeInvoiceTransactions } from "@/utils/invoiceCompetenceEngine";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -67,7 +68,7 @@ import {
 
 const BANK_OPTIONS = [
   { id: "auto", name: "Auto-detectar (Padrão)" },
-  { id: "caixa", name: "Caixa Econômica Federal (Fatura PDF com Revisão Manual)" },
+  { id: "caixa", name: "Caixa Econômica Federal (Fatura PDF)" },
   { id: "nubank", name: "Nubank" },
   { id: "inter", name: "Banco Inter" },
   { id: "itau", name: "Itaú" },
@@ -133,7 +134,6 @@ export default function ImportTransactions() {
     },
   });
 
-  // Define workspace inicial
   React.useEffect(() => {
     if (workspaces.length > 0 && !selectedWorkspaceId) {
       setSelectedWorkspaceId(workspaces[0].id);
@@ -169,71 +169,7 @@ export default function ImportTransactions() {
     enabled: !!selectedWorkspaceId,
   });
 
-  // Helper para sugerir categoria por palavras-chave
-  const suggestCategory = (description: string, type: "income" | "expense"): { id: number; name: string } | null => {
-    const desc = description.toLowerCase();
-    const typeCats = categories.filter((c) => c.type === type);
-
-    for (const cat of typeCats) {
-      const catName = cat.name.toLowerCase();
-      if (desc.includes(catName)) return { id: cat.id, name: cat.name };
-    }
-
-    if (type === "expense") {
-      const alimentacao = typeCats.find((c) => /alimenta|mercado|restaurante|refei/i.test(c.name));
-      if (alimentacao && /mercado|supermercado|pao de acucar|carrefour|ifood|restaurante|padaria|lanche|burger/i.test(desc)) {
-        return { id: alimentacao.id, name: alimentacao.name };
-      }
-
-      const transporte = typeCats.find((c) => /transporte|combust|uber|carro/i.test(c.name));
-      if (transporte && /uber|99app|posto|shell|ipiranga|combustivel|gasolina|estacionamento/i.test(desc)) {
-        return { id: transporte.id, name: transporte.name };
-      }
-
-      const saude = typeCats.find((c) => /saude|saúde|farmacia|medic/i.test(c.name));
-      if (saude && /farmacia|droga|drogasil|pacheco|consulta|laborat|clinica/i.test(desc)) {
-        return { id: saude.id, name: saude.name };
-      }
-
-      const lazer = typeCats.find((c) => /lazer|assinat|streaming/i.test(c.name));
-      if (lazer && /netflix|spotify|amazon|prime|cinema|ingresso|disney/i.test(desc)) {
-        return { id: lazer.id, name: lazer.name };
-      }
-    }
-
-    return null;
-  };
-
-  // Helper para vincular cartão automaticamente pelos últimos 4 dígitos (Bug 3)
-  const matchCreditCardByDigits = (cardDigits: string | null | undefined, cardLabelText: string = "") => {
-    if (!cardDigits && !cardLabelText) return { creditCardId: null, isIdentified: false, matchedLabel: cardLabelText };
-
-    const digits = cardDigits || (cardLabelText.match(/\d{4}/)?.[0] ?? null);
-
-    if (digits && creditCards.length > 0) {
-      const matched = creditCards.find((c) => {
-        if (c.last_four_digits && c.last_four_digits.trim() === digits) return true;
-        if (c.name && c.name.includes(digits)) return true;
-        return false;
-      });
-
-      if (matched) {
-        return {
-          creditCardId: matched.id,
-          isIdentified: true,
-          matchedLabel: `${matched.name}${matched.last_four_digits ? ` (•••• ${matched.last_four_digits})` : ""}`,
-        };
-      }
-    }
-
-    return {
-      creditCardId: selectedCreditCardId !== "none" ? selectedCreditCardId : null,
-      isIdentified: selectedCreditCardId !== "none",
-      matchedLabel: cardLabelText || "Cartão não identificado",
-    };
-  };
-
-  // Processamento de Arquivo PDF no Frontend com suporte a Caixa / Revisão Manual
+  // Processamento de Arquivo PDF no Frontend com suporte à Camada 2 (Engine de Competência)
   const processPdfFile = async (file: File) => {
     setIsParsingPdf(true);
     setErrorMessage(null);
@@ -247,89 +183,54 @@ export default function ImportTransactions() {
       const isCaixaDetected = /caixa\s+econ[oô]mica/i.test(text) || (/\(cart[aã]o\s+\d+\)/i.test(text) && !detectReferenceYear(text));
 
       if (isCaixaSelected || isCaixaDetected) {
-        let caixaItems: any[] = [];
-        let invoiceRef: any = {};
+        let normalizedList: ImportedTransaction[] = [];
+        let invoiceYear = new Date().getFullYear();
+        let invoiceMonth = new Date().getMonth() + 1;
 
         try {
+          // Chama o endpoint de preview da Camada 2
           const previewRes = await api.post("/api/import/preview", {
             pdfText: text,
             workspaceId: selectedWorkspaceId,
           });
-          caixaItems = previewRes.data.transactions || [];
-          invoiceRef = {
-            ano: previewRes.data.anoFatura,
-            mes: previewRes.data.mesFatura,
-            mesReferencia: previewRes.data.mesReferenciaFatura,
-          };
+          normalizedList = previewRes.data.transactions || [];
+          invoiceYear = previewRes.data.anoFatura || invoiceYear;
+          invoiceMonth = previewRes.data.mesFatura || invoiceMonth;
         } catch {
-          caixaItems = extractCaixaTransactions(text);
-          invoiceRef = detectInvoiceReference(text);
+          // Fallback client-side usando Camada 1 + Camada 2
+          const raw = extractRawTransactions(text);
+          const header = extractInvoiceHeader(text);
+          const normalized = normalizeInvoiceTransactions(
+            raw,
+            header,
+            creditCards,
+            categories,
+            selectedCreditCardId
+          );
+          normalizedList = normalized.transactions as ImportedTransaction[];
+          invoiceYear = normalized.anoFatura;
+          invoiceMonth = normalized.mesFatura;
         }
 
-        if (caixaItems.length === 0) {
+        if (normalizedList.length === 0) {
           throw new Error("Nenhuma transação identificada no formato de fatura Caixa. Verifique o arquivo.");
         }
 
-        const effectiveYear = invoiceRef.ano || new Date().getFullYear();
-        const effectiveMonth = invoiceRef.mes || new Date().getMonth() + 1;
-        setGlobalYear(effectiveYear);
-        setGlobalMonth(effectiveMonth);
-
-        const mappedTransactions: ImportedTransaction[] = caixaItems.map((it: any, index: number) => {
-          const type: "income" | "expense" = it.tipo === "C" ? "income" : "expense";
-          const fullDescription = it.descricao || it.description; // Preservação integral (Bug 1)
-          const cat = suggestCategory(fullDescription, type);
-
-          // Bug 3: Vinculação de cartão existente
-          const cardMatch = matchCreditCardByDigits(it.cartaoDigitos, it.cartao || it.cardLabel);
-          const finalCreditCardId = it.creditCardId || cardMatch.creditCardId;
-          const isIdentified = it.cartaoIdentificado !== undefined ? it.cartaoIdentificado : cardMatch.isIdentified;
-
-          // Bug 2: Data de competência da fatura
-          const dataTransacao = it.dataTransacao || it.dataParcial || "01/01";
-          const [dd] = dataTransacao.split("/");
-          const dataCompetencia = it.dataCompetencia || `${effectiveYear}-${String(effectiveMonth).padStart(2, "0")}-${dd.padStart(2, "0")}`;
-
-          return {
-            id: it.id || `caixa-${index}-${Date.now()}`,
-            tempId: `caixa-${index}`,
-            date: dataCompetencia,
-            dataTransacao,
-            dataParcial: dataTransacao,
-            dataCompetencia,
-            ano: effectiveYear,
-            mes: effectiveMonth,
-            mesReferenciaFatura: invoiceRef.mesReferencia,
-            precisaRevisao: true,
-            description: fullDescription,
-            cleanDescription: fullDescription,
-            amount: it.valor || it.amount,
-            type,
-            tipo: it.tipo || (type === "income" ? "C" : "D"),
-            cartao: cardMatch.matchedLabel,
-            cardLabel: cardMatch.matchedLabel,
-            cartaoDigitos: it.cartaoDigitos,
-            cartaoIdentificado: isIdentified,
-            creditCardId: finalCreditCardId,
-            categoryId: cat?.id || it.categoryId || null,
-            categoryName: cat?.name || it.categoryName || null,
-            selected: true,
-          };
-        });
-
+        setGlobalYear(invoiceYear);
+        setGlobalMonth(invoiceMonth);
         setIsManualReviewMode(true);
-        setTransactions(mappedTransactions);
+        setTransactions(normalizedList);
         setPreviewData({
           filename: file.name,
           fileType: "pdf",
-          totalCount: mappedTransactions.length,
+          totalCount: normalizedList.length,
           duplicatesCount: 0,
-          newCount: mappedTransactions.length,
+          newCount: normalizedList.length,
           summary: {
             bankName: "Caixa Econômica Federal",
-            fileType: "Fatura PDF (Revisão Manual)",
+            fileType: "Fatura PDF (Revisão de Competência)",
           },
-          transactions: mappedTransactions,
+          transactions: normalizedList,
         });
 
         setIsParsingPdf(false);
@@ -346,24 +247,21 @@ export default function ImportTransactions() {
 
       const mappedTransactions: ImportedTransaction[] = parsedItems.map((it, index) => {
         const type: "income" | "expense" = it.amount > 0 ? "income" : "expense";
-        const cat = suggestCategory(it.description, type);
-        const cardMatch = matchCreditCardByDigits(it.cardLast4, it.cardLabel);
-
         return {
           id: `pdf-${index}-${Date.now()}`,
           tempId: `pdf-${index}`,
           date: it.date,
           dataCompetencia: it.date,
+          dataTransacao: it.date.slice(5).split("-").reverse().join("/"),
           description: it.description,
           cleanDescription: it.description,
           amount: Math.abs(it.amount),
           type,
-          categoryId: cat?.id || null,
-          categoryName: cat?.name || null,
-          creditCardId: cardMatch.creditCardId || (selectedCreditCardId !== "none" ? selectedCreditCardId : null),
+          categoryId: null,
+          categoryName: null,
+          creditCardId: selectedCreditCardId !== "none" ? selectedCreditCardId : null,
           cardLast4: it.cardLast4,
-          cardLabel: cardMatch.matchedLabel,
-          cartaoIdentificado: cardMatch.isIdentified,
+          cardLabel: it.cardLabel,
           installments: it.installments || 1,
           installmentCurrent: it.installmentCurrent || 1,
           selected: true,
@@ -426,54 +324,34 @@ export default function ImportTransactions() {
         throw new Error("Selecione ao menos uma transação para importar.");
       }
 
-      if (isManualReviewMode) {
-        const payload = selected.map((t) => {
-          const year = t.ano || globalYear;
-          const month = t.mes || globalMonth;
-          const day = (t.dataTransacao || t.dataParcial || "01/01").split("/")[0].padStart(2, "0");
-          const competenceDate = t.dataCompetencia || `${year}-${String(month).padStart(2, "0")}-${day}`;
-
-          return {
-            date: competenceDate,
-            dataCompetencia: competenceDate,
-            dataTransacao: t.dataTransacao,
-            dataParcial: t.dataParcial,
-            ano: year,
-            mes: month,
-            descricao: t.description, // Descrição completa sem truncamento (Bug 1)
-            description: t.description,
-            valor: Number(t.amount),
-            amount: Number(t.amount),
-            tipo: t.type === "income" ? "C" : "D",
-            type: t.type,
-            cartao: t.cartao || t.cardLabel,
-            creditCardId: t.creditCardId || null, // Vinculação com cartão do workspace (Bug 3)
-            categoryId: t.categoryId || null,
-          };
-        });
-
-        const res = await api.post("/api/import/confirm", {
-          workspaceId: selectedWorkspaceId,
-          transactions: payload,
-        });
-        return res.data;
-      }
-
-      const payload = {
-        creditCardId: selectedCreditCardId !== "none" ? selectedCreditCardId : null,
-        transactions: selected.map((t) => ({
-          date: t.date,
+      // Garante que o payload envie a dataCompetencia no campo date
+      const payload = selected.map((t) => {
+        const competenceDate = t.dataCompetencia || t.date;
+        return {
+          date: competenceDate,
+          dataCompetencia: competenceDate,
+          dataTransacao: t.dataTransacao,
+          dataParcial: t.dataParcial,
+          ano: t.ano || globalYear,
+          mes: t.mes || globalMonth,
+          descricao: t.description, // Descrição completa sem truncamento
           description: t.description,
-          amount: t.amount,
+          valor: Number(t.amount),
+          amount: Number(t.amount),
+          tipo: t.type === "income" ? "C" : "D",
           type: t.type,
-          categoryId: t.categoryId || null,
+          cartao: t.cartao || t.cardLabel,
           creditCardId: t.creditCardId || (selectedCreditCardId !== "none" ? selectedCreditCardId : null),
+          categoryId: t.categoryId || null,
           installments: t.installments || 1,
           installmentCurrent: t.installmentCurrent || 1,
-        })),
-      };
+        };
+      });
 
-      const res = await api.post(`/workspaces/${selectedWorkspaceId}/import/confirm`, payload);
+      const res = await api.post("/api/import/confirm", {
+        workspaceId: selectedWorkspaceId,
+        transactions: payload,
+      });
       return res.data;
     },
     onSuccess: (data) => {
@@ -623,7 +501,6 @@ export default function ImportTransactions() {
   }, [filteredTransactions]);
 
   const hasMultipleCards = Object.keys(cardGroups).length > 1;
-
   const selectedCount = transactions.filter((t) => t.selected).length;
   const isAllSelected = filteredTransactions.length > 0 && filteredTransactions.every((t) => t.selected);
 
@@ -824,7 +701,7 @@ export default function ImportTransactions() {
             )}
           </div>
 
-          {/* Banner de Revisão Manual com Competência da Fatura (Bug 2) */}
+          {/* Banner de Revisão Manual com Competência da Fatura */}
           {isManualReviewMode && (
             <div className="p-4 rounded-xl bg-amber-50/90 border border-amber-200 text-amber-900 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-4">
               <div className="flex items-start gap-3">
@@ -988,7 +865,7 @@ export default function ImportTransactions() {
                           />
                         </td>
 
-                        {/* Competência e Data Original (Bug 2) */}
+                        {/* Competência e Data Original */}
                         <td className="p-3 whitespace-nowrap">
                           <div className="flex flex-col gap-0.5">
                             <Badge variant="outline" className="font-mono text-xs font-bold bg-slate-50 w-fit">
@@ -1025,11 +902,11 @@ export default function ImportTransactions() {
                           </td>
                         )}
 
-                        {/* Descrição Completa Editável sem truncamento (Bug 1) */}
+                        {/* Descrição Completa Editável sem truncamento */}
                         <td className="p-3">
                           {isManualReviewMode ? (
                             <Input
-                              value={tx.description}
+                              value={tx.description || tx.descricao || ""}
                               title={tx.description}
                               onChange={(e) => handleUpdateTransactionField(targetIdx, "description", e.target.value)}
                               className="h-8 text-xs font-medium bg-white border-slate-300 min-w-[260px]"
@@ -1086,7 +963,7 @@ export default function ImportTransactions() {
                           )}
                         </td>
 
-                        {/* Cartão Vinculado - SELECT com cartões cadastrados (Bug 3) */}
+                        {/* Cartão Vinculado - SELECT com cartões cadastrados */}
                         <td className="p-3">
                           {creditCards.length > 0 ? (
                             <div className="space-y-1">

@@ -3,7 +3,8 @@ import { authMiddleware } from '../auth';
 import type { Bindings, Variables } from '../auth';
 import { parseOFX } from '../utils/ofxParser';
 import { parseCSV } from '../utils/csvParser';
-import { extractTransactions, detectInvoiceReference } from '../utils/caixaInvoiceParser';
+import { extractRawTransactions, extractInvoiceHeader } from '../utils/caixaInvoiceParser';
+import { normalizeInvoiceTransactions } from '../utils/invoiceCompetenceEngine';
 import { suggestCategory } from '../utils/categoryRules';
 import { detectInstallment } from '../utils/installmentDetector';
 import { checkDuplicate, type ExistingTransactionRef } from '../utils/deduplication';
@@ -45,7 +46,7 @@ async function resolveUserWorkspaceId(db: D1Database, userId: string, preferredW
 }
 
 // =========================================================================
-// 1. ENDPOINTS DE PREVIEW (CAIXA PDF / TEXTO) - NÃO SALVA NO BANCO
+// 1. ENDPOINTS DE PREVIEW (CAIXA / FATURAS PDF) - CAMADA 2 ENGINE
 // =========================================================================
 
 async function handlePreview(c: any) {
@@ -75,11 +76,11 @@ async function handlePreview(c: any) {
 			return c.json({ error: 'Nenhum texto de fatura fornecido para análise.' }, 400);
 		}
 
-		// Extrai lançamentos sem truncamento e detecta competência da fatura (Bugs 1 & 2)
-		const extracted = extractTransactions(pdfText);
-		const invoiceRef = detectInvoiceReference(pdfText);
+		// Camada 1: Extração Bruta de Dados
+		const rawTransactions = extractRawTransactions(pdfText);
+		const invoiceHeader = extractInvoiceHeader(pdfText);
 
-		if (extracted.length === 0) {
+		if (rawTransactions.length === 0) {
 			return c.json(
 				{
 					error: 'Nenhuma transação válida encontrada no texto da fatura. Certifique-se de que o PDF/texto contém linhas no formato: DD/MM DESCRIÇÃO VALOR(D|C).',
@@ -88,7 +89,7 @@ async function handlePreview(c: any) {
 			);
 		}
 
-		// Se tiver workspace associado, buscar categorias e cartões de crédito
+		// Buscar categorias e cartões de crédito do workspace
 		let existingCategories: Array<{ id: number; name: string; type?: string }> = [];
 		let existingCreditCards: Array<{ id: string; name: string; last_four_digits?: string | null; brand?: string | null }> = [];
 
@@ -106,75 +107,23 @@ async function handlePreview(c: any) {
 			existingCreditCards = cardRes.results || [];
 		}
 
-		const currentYear = invoiceRef.ano || new Date().getFullYear();
-		const currentMonth = invoiceRef.mes || new Date().getMonth() + 1;
-
-		const transactionsWithSuggestions = extracted.map((tx) => {
-			const categorySuggestion = suggestCategory(tx.descricao, existingCategories);
-
-			// Bug 3: Vinculação automática do cartão pelo final de 4 dígitos
-			let matchedCardId: string | null = null;
-			let matchedCardLabel = tx.cartao;
-			let isCardIdentified = false;
-
-			if (tx.cartaoDigitos && existingCreditCards.length > 0) {
-				const matchedCard = existingCreditCards.find((c) => {
-					if (c.last_four_digits && c.last_four_digits.trim() === tx.cartaoDigitos) {
-						return true;
-					}
-					if (c.name && c.name.includes(tx.cartaoDigitos!)) {
-						return true;
-					}
-					return false;
-				});
-
-				if (matchedCard) {
-					matchedCardId = matchedCard.id;
-					matchedCardLabel = `${matchedCard.name}${matchedCard.last_four_digits ? ` (•••• ${matchedCard.last_four_digits})` : ''}`;
-					isCardIdentified = true;
-				}
-			}
-
-			// Bug 2: Data de competência da fatura
-			const [dd] = tx.dataTransacao.split('/');
-			const dataCompetencia = tx.dataCompetencia || `${currentYear}-${String(currentMonth).padStart(2, '0')}-${dd.padStart(2, '0')}`;
-
-			return {
-				id: tx.id || crypto.randomUUID(),
-				dataTransacao: tx.dataTransacao,
-				dataParcial: tx.dataParcial,
-				dataCompetencia,
-				date: dataCompetencia,
-				ano: currentYear,
-				mes: currentMonth,
-				mesReferenciaFatura: invoiceRef.mesReferencia,
-				dataVencimento: invoiceRef.dataVencimento,
-				descricao: tx.descricao, // Descrição integral (Bug 1)
-				description: tx.descricao,
-				valor: tx.valor,
-				amount: tx.valor,
-				tipo: tx.tipo,
-				type: tx.tipo === 'C' ? 'income' : 'expense',
-				cartao: matchedCardLabel,
-				cartaoDigitos: tx.cartaoDigitos,
-				creditCardId: matchedCardId,
-				cartaoIdentificado: isCardIdentified,
-				cardLabel: matchedCardLabel,
-				precisaRevisao: true,
-				categoryId: categorySuggestion.categoryId,
-				categoryName: categorySuggestion.categoryName,
-			};
-		});
+		// Camada 2: Engine Agnóstica de Competência e Normalização
+		const normalized = normalizeInvoiceTransactions(
+			rawTransactions,
+			invoiceHeader,
+			existingCreditCards,
+			existingCategories
+		);
 
 		return c.json({
 			success: true,
-			totalCount: transactionsWithSuggestions.length,
+			totalCount: normalized.transactions.length,
 			precisaRevisao: true,
-			mesReferenciaFatura: invoiceRef.mesReferencia,
-			anoFatura: currentYear,
-			mesFatura: currentMonth,
-			dataVencimento: invoiceRef.dataVencimento,
-			transactions: transactionsWithSuggestions,
+			mesReferenciaFatura: normalized.mesReferenciaFatura,
+			anoFatura: normalized.anoFatura,
+			mesFatura: normalized.mesFatura,
+			dataVencimento: normalized.dataVencimento,
+			transactions: normalized.transactions,
 		});
 	} catch (err: any) {
 		console.error('Erro no preview de importação:', err);
@@ -217,28 +166,26 @@ async function handleConfirm(c: any) {
 		const statements: any[] = [];
 
 		for (const item of rawTransactions) {
-			// Bug 2: Prioriza dataCompetencia sobre a data de compra original
+			// Camada 3: Resolução estrita da data de competência da fatura (YYYY-MM-DD)
 			let isoDate: string | null = null;
 
 			if (item.dataCompetencia && /^\d{4}-\d{2}-\d{2}$/.test(String(item.dataCompetencia).trim())) {
 				isoDate = String(item.dataCompetencia).trim();
-			} else if (item.dataCompleta && /^\d{4}-\d{2}-\d{2}$/.test(String(item.dataCompleta).trim())) {
-				isoDate = String(item.dataCompleta).trim();
 			} else if (item.date && /^\d{4}-\d{2}-\d{2}$/.test(String(item.date).trim())) {
 				isoDate = String(item.date).trim();
+			} else if (item.dataCompleta && /^\d{4}-\d{2}-\d{2}$/.test(String(item.dataCompleta).trim())) {
+				isoDate = String(item.dataCompleta).trim();
+			} else if (item.ano && item.mes) {
+				const day = (item.dataTransacao || item.dataParcial || '01').split('/')[0].padStart(2, '0');
+				isoDate = `${item.ano}-${String(item.mes).padStart(2, '0')}-${day}`;
 			} else if (item.dataParcial && (item.ano || item.year)) {
 				const yearNum = parseInt(String(item.ano || item.year).trim(), 10);
-				if (isNaN(yearNum) || yearNum < 1970 || yearNum > 2100) {
-					continue;
-				}
 				const dateParts = String(item.dataParcial).trim().split('/');
-				if (dateParts.length !== 2) continue;
-				const day = dateParts[0].padStart(2, '0');
-				const month = dateParts[1].padStart(2, '0');
-				isoDate = `${yearNum}-${month}-${day}`;
-			} else if (item.data && /^\d{2}\/\d{2}\/\d{4}$/.test(String(item.data).trim())) {
-				const [dd, mm, yyyy] = String(item.data).trim().split('/');
-				isoDate = `${yyyy}-${mm}-${dd}`;
+				if (dateParts.length === 2 && !isNaN(yearNum) && yearNum >= 1970 && yearNum <= 2100) {
+					const day = dateParts[0].padStart(2, '0');
+					const month = dateParts[1].padStart(2, '0');
+					isoDate = `${yearNum}-${month}-${day}`;
+				}
 			}
 
 			if (!isoDate || !/^\d{4}-\d{2}-\d{2}$/.test(isoDate)) {
@@ -259,7 +206,6 @@ async function handleConfirm(c: any) {
 			const txType: 'income' | 'expense' = (rawType === 'C' || rawType === 'INCOME') ? 'income' : 'expense';
 
 			const categoryIdNum = item.categoryId ? Number(item.categoryId) : null;
-			// Bug 3: Vincula ao credit_card_id informado na revisão
 			const targetCreditCardId = item.creditCardId || body.creditCardId || null;
 
 			const installments = Math.max(1, Math.floor(Number(item.installments) || 1));
