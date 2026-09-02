@@ -824,6 +824,35 @@ Permitir que os administradores editem o nome completo, status de ativação da 
 ### Pendências
 - Nenhuma pendência.
 
+---
+
+## 20. [2026-09-02 08:23] - Correção do Submit e Diagnóstico do Modal de Criação de Workspace
+
+### O que foi feito
+1. **Diagnóstico da Causa Raiz**:
+   - No modal `Novo Workspace` em `frontend/src/pages/Workspaces.tsx`, o botão de submit estava desacoplado fora da tag `<form>` utilizando `form="workspace-form"` em conjunto com o modal de portal do Radix Dialog.
+   - Em certos navegadores, essa desconexão impedia o acionamento do evento sintético `onSubmit`, ou no caso de erros de rede/auth não capturados, a mutation caía no fallback genérico `"Erro ao criar workspace"` sem logar no console.
+2. **Correções Aplicadas**:
+   - Aninhados os botões de ação e o `DialogFooter` diretamente dentro do `<form onSubmit={handleSubmit}>`.
+   - Adicionados logs explícitos via `console.error` em `createWorkspace`, `updateWorkspace`, `deleteWorkspace` e nos hooks `onError` do React Query.
+   - Mensagens de erro com fallback inteligente detalhado (`err.response?.data?.error || err.response?.data?.message || err.message`).
+   - Criado `frontend/src/tests/Workspaces.test.tsx` cobrindo listagem, criação e tratamento de erros.
+3. **Validação e Deploy**:
+   - **60 testes passando no Frontend (100%) em 13 arquivos**.
+   - Build de produção e deploy publicados no Cloudflare Pages: `https://financeiro-app-6wf.pages.dev` e preview `https://1653b4c1.financeiro-app-6wf.pages.dev`.
+   - Commit enviado para o GitHub: `eae2183`.
+
+### Arquivos criados
+- `frontend/src/tests/Workspaces.test.tsx`: Testes unitários do módulo de Workspaces.
+
+### Arquivos modificados
+- `frontend/src/pages/Workspaces.tsx`: Estrutura do formulário, submit e logs.
+- `backend/PROGRESSO.md` e `PROGRESSO.md`: Registro da atualização.
+
+### Pendências
+- Nenhuma pendência.
+
+
 
 
 
