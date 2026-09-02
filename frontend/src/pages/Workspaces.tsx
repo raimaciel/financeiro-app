@@ -9,7 +9,6 @@ import { Badge } from "@/components/ui/badge";
 import {
   Card,
   CardContent,
-  CardDescription,
   CardFooter,
   CardHeader,
   CardTitle,
@@ -49,8 +48,7 @@ import {
   FolderKanban,
 } from "lucide-react";
 
-// ── helpers ──────────────────────────────────────────────────────────────────
-
+// Helpers
 const TYPE_LABELS: Record<string, string> = {
   personal: "Pessoal",
   couple: "Casal",
@@ -75,16 +73,20 @@ const ROLE_LABELS: Record<string, string> = {
   viewer: "Visualizador",
 };
 
-// ── API calls ──────────────────────────────────────────────────────────────
-
+// API calls
 const fetchWorkspaces = async (): Promise<Workspace[]> => {
   const res = await api.get("/workspaces");
   return res.data;
 };
 
 const createWorkspace = async (data: { name: string; type: string }) => {
-  const res = await api.post("/workspaces", data);
-  return res.data;
+  try {
+    const res = await api.post("/workspaces", data);
+    return res.data;
+  } catch (err) {
+    console.error("[createWorkspace API call failed]:", err);
+    throw err;
+  }
 };
 
 const updateWorkspace = async ({
@@ -94,23 +96,29 @@ const updateWorkspace = async ({
   id: string;
   data: { name: string; type: string };
 }) => {
-  const res = await api.put(`/workspaces/${id}`, data);
-  return res.data;
+  try {
+    const res = await api.put(`/workspaces/${id}`, data);
+    return res.data;
+  } catch (err) {
+    console.error("[updateWorkspace API call failed]:", err);
+    throw err;
+  }
 };
 
 const deleteWorkspace = async (id: string) => {
-  const res = await api.delete(`/workspaces/${id}`);
-  return res.data;
+  try {
+    const res = await api.delete(`/workspaces/${id}`);
+    return res.data;
+  } catch (err) {
+    console.error("[deleteWorkspace API call failed]:", err);
+    throw err;
+  }
 };
-
-// ── Toast simples ──────────────────────────────────────────────────────────
 
 interface ToastState {
   message: string;
   type: "success" | "error";
 }
-
-// ── Componente principal ───────────────────────────────────────────────────
 
 type FormMode = "create" | "edit";
 
@@ -124,25 +132,24 @@ const EMPTY_FORM: FormState = { name: "", type: "personal" };
 export default function Workspaces() {
   const queryClient = useQueryClient();
 
-  // toast
+  // Toast
   const [toast, setToast] = useState<ToastState | null>(null);
   const showToast = (message: string, type: "success" | "error") => {
     setToast({ message, type });
     setTimeout(() => setToast(null), 3500);
   };
 
-  // modal estado
+  // Modal estado
   const [modalOpen, setModalOpen] = useState(false);
   const [formMode, setFormMode] = useState<FormMode>("create");
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState<FormState>(EMPTY_FORM);
   const [formError, setFormError] = useState("");
 
-  // confirmação de exclusão
+  // Confirmação de exclusão
   const [deleteTarget, setDeleteTarget] = useState<Workspace | null>(null);
 
-  // ── Queries e mutations ──────────────────────────────────────────────────
-
+  // Queries e mutations
   const { data: workspaces = [], isLoading, isError } = useQuery({
     queryKey: ["workspaces"],
     queryFn: fetchWorkspaces,
@@ -156,7 +163,13 @@ export default function Workspaces() {
       closeModal();
     },
     onError: (err: any) => {
-      setFormError(err.response?.data?.error || "Erro ao criar workspace");
+      console.error("[createWorkspace Mutation Error]:", err);
+      const message =
+        err.response?.data?.error ||
+        err.response?.data?.message ||
+        err.message ||
+        "Erro ao criar workspace. Verifique sua conexão e tente novamente.";
+      setFormError(message);
     },
   });
 
@@ -168,7 +181,13 @@ export default function Workspaces() {
       closeModal();
     },
     onError: (err: any) => {
-      setFormError(err.response?.data?.error || "Erro ao atualizar workspace");
+      console.error("[updateWorkspace Mutation Error]:", err);
+      const message =
+        err.response?.data?.error ||
+        err.response?.data?.message ||
+        err.message ||
+        "Erro ao atualizar workspace.";
+      setFormError(message);
     },
   });
 
@@ -180,12 +199,11 @@ export default function Workspaces() {
       setDeleteTarget(null);
     },
     onError: (err: any) => {
+      console.error("[deleteWorkspace Mutation Error]:", err);
       showToast(err.response?.data?.error || "Erro ao excluir workspace", "error");
       setDeleteTarget(null);
     },
   });
-
-  // ── Handlers ──────────────────────────────────────────────────────────────
 
   const openCreate = () => {
     setForm(EMPTY_FORM);
@@ -227,8 +245,6 @@ export default function Workspaces() {
 
   const isMutating = createMutation.isPending || updateMutation.isPending;
 
-  // ── Render ─────────────────────────────────────────────────────────────────
-
   return (
     <div className="space-y-6">
       {/* Toast */}
@@ -248,50 +264,55 @@ export default function Workspaces() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold tracking-tight">Workspaces</h1>
-          <p className="text-sm text-muted-foreground mt-1">
-            Gerencie seus espaços financeiros pessoais, de casal ou empresariais.
+          <p className="text-sm text-muted-foreground mt-0.5">
+            Gerencie seus espaços financeiros (pessoal, casal ou empresa).
           </p>
         </div>
-        <Button id="btn-novo-workspace" onClick={openCreate} className="gap-2">
+        <Button onClick={openCreate} className="gap-2 font-semibold shadow-xs">
           <Plus className="h-4 w-4" />
           Novo Workspace
         </Button>
       </div>
 
-      {/* Estado de carregamento */}
+      {/* Estado de loading */}
       {isLoading && (
-        <div className="flex items-center justify-center py-20">
-          <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+        <div className="flex items-center justify-center py-16">
+          <Loader2 className="h-8 w-8 animate-spin text-primary" />
         </div>
       )}
 
-      {/* Erro */}
+      {/* Estado de erro na listagem */}
       {isError && (
-        <div className="rounded-md border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+        <div className="rounded-lg border border-red-200 bg-red-50 p-6 text-center text-sm text-red-700">
           Não foi possível carregar os workspaces. Tente recarregar a página.
         </div>
       )}
 
-      {/* Lista vazia */}
+      {/* Estado vazio */}
       {!isLoading && !isError && workspaces.length === 0 && (
-        <div className="flex flex-col items-center justify-center rounded-xl border border-dashed py-20 text-center">
-          <FolderKanban className="h-12 w-12 text-muted-foreground mb-4" />
-          <p className="text-lg font-semibold">Nenhum workspace ainda</p>
-          <p className="text-sm text-muted-foreground mt-1 mb-6">
-            Crie seu primeiro espaço financeiro para começar.
+        <Card className="flex flex-col items-center justify-center p-12 text-center border-dashed">
+          <div className="flex h-12 w-12 items-center justify-center rounded-full bg-slate-100 text-slate-500 mb-3">
+            <FolderKanban className="h-6 w-6" />
+          </div>
+          <CardTitle className="text-base">Nenhum workspace encontrado</CardTitle>
+          <p className="text-sm text-muted-foreground mt-1 max-w-sm">
+            Crie seu primeiro workspace para começar a organizar suas contas e transações.
           </p>
-          <Button onClick={openCreate} className="gap-2">
+          <Button onClick={openCreate} className="mt-4 gap-2">
             <Plus className="h-4 w-4" />
             Criar Workspace
           </Button>
-        </div>
+        </Card>
       )}
 
       {/* Grid de cards */}
       {!isLoading && workspaces.length > 0 && (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {workspaces.map((ws) => (
-            <Card key={ws.id} className="relative flex flex-col hover:shadow-md transition-shadow">
+            <Card
+              key={ws.id}
+              className="flex flex-col justify-between transition-shadow hover:shadow-md"
+            >
               <CardHeader className="pb-3">
                 <div className="flex items-start justify-between gap-2">
                   <div className="flex items-center gap-3">
@@ -377,7 +398,7 @@ export default function Workspaces() {
             </DialogDescription>
           </DialogHeader>
 
-          <form id="workspace-form" onSubmit={handleSubmit} className="space-y-4 py-2">
+          <form onSubmit={handleSubmit} className="space-y-4 py-2">
             {formError && (
               <div className="rounded-md bg-red-50 border border-red-200 p-3 text-sm text-red-700">
                 {formError}
@@ -427,29 +448,25 @@ export default function Workspaces() {
                 </SelectContent>
               </Select>
             </div>
-          </form>
 
-          <DialogFooter className="gap-2">
-            <Button variant="outline" onClick={closeModal} disabled={isMutating}>
-              Cancelar
-            </Button>
-            <Button
-              type="submit"
-              form="workspace-form"
-              disabled={isMutating}
-            >
-              {isMutating ? (
-                <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  {formMode === "create" ? "Criando..." : "Salvando..."}
-                </>
-              ) : formMode === "create" ? (
-                "Criar Workspace"
-              ) : (
-                "Salvar Alterações"
-              )}
-            </Button>
-          </DialogFooter>
+            <DialogFooter className="gap-2 pt-2">
+              <Button type="button" variant="outline" onClick={closeModal} disabled={isMutating}>
+                Cancelar
+              </Button>
+              <Button type="submit" disabled={isMutating}>
+                {isMutating ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    {formMode === "create" ? "Criando..." : "Salvando..."}
+                  </>
+                ) : formMode === "create" ? (
+                  "Criar Workspace"
+                ) : (
+                  "Salvar Alterações"
+                )}
+              </Button>
+            </DialogFooter>
+          </form>
         </DialogContent>
       </Dialog>
 
