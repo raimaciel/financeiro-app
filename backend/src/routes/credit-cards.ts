@@ -65,8 +65,9 @@ function validateCardType(cardTypeInput: any): { valid: boolean; value?: string;
 		return { valid: true, value: 'physical' };
 	}
 	const val = String(cardTypeInput).trim().toLowerCase();
-	if (!['physical', 'virtual'].includes(val)) {
-		return { valid: false, error: 'card_type inválido. Use "physical" ou "virtual".' };
+	const allowed = ['physical', 'virtual', 'virtual_permanent', 'virtual_temporary', 'virtual_app_linked'];
+	if (!allowed.includes(val)) {
+		return { valid: false, error: 'card_type inválido. Use "physical", "virtual_permanent", "virtual_temporary" ou "virtual_app_linked".' };
 	}
 	return { valid: true, value: val };
 }
@@ -92,6 +93,8 @@ function formatCreditCardResponse(card: any, closingDay: number, dueDay: number)
 	const institution = card.institution ?? null;
 	const cardTier = card.card_tier || 'standard';
 	const cardImageUrl = card.card_image_url ?? null;
+	const registeredFor = card.registered_for ?? null;
+	const expiresAt = card.expires_at ?? null;
 
 	return {
 		id: card.id,
@@ -113,9 +116,14 @@ function formatCreditCardResponse(card: any, closingDay: number, dueDay: number)
 		lastFourDigits: lastFourDigits,
 		bank_name: bankName,
 		bankName: bankName,
+		bank: bankName,
 		institution: institution,
 		card_tier: cardTier,
 		cardTier: cardTier,
+		registered_for: registeredFor,
+		registeredFor: registeredFor,
+		expires_at: expiresAt,
+		expiresAt: expiresAt,
 		card_image_url: cardImageUrl,
 		cardImageUrl: cardImageUrl,
 		image_url: cardImageUrl ? `/cards/${card.id}/image` : null,
@@ -161,6 +169,10 @@ creditCardsRouter.post('/workspaces/:workspaceId/credit-cards', async (c) => {
 			institution,
 			card_tier,
 			cardTier,
+			registered_for,
+			registeredFor,
+			expires_at,
+			expiresAt,
 		} = body;
 
 		if (!name || typeof name !== 'string' || name.trim() === '') {
@@ -183,6 +195,18 @@ creditCardsRouter.post('/workspaces/:workspaceId/credit-cards', async (c) => {
 			return c.json({ error: typeResult.error }, 400);
 		}
 
+		const isVirtual = typeResult.value && typeResult.value.startsWith('virtual_');
+		const registeredForVal = (registered_for !== undefined ? registered_for : registeredFor) ? String(registered_for !== undefined ? registered_for : registeredFor).trim() : null;
+		const expiresAtVal = (expires_at !== undefined ? expires_at : expiresAt) ? String(expires_at !== undefined ? expires_at : expiresAt).trim() : null;
+
+		if (isVirtual && (!registeredForVal || registeredForVal === '')) {
+			return c.json({ error: 'O campo "Cadastrado em / Vinculado a" é obrigatório para cartões virtuais.' }, 400);
+		}
+
+		if (typeResult.value === 'virtual_temporary' && (!expiresAtVal || expiresAtVal === '')) {
+			return c.json({ error: 'O campo "Validade / Expiração" é obrigatório para cartões virtuais temporários.' }, 400);
+		}
+
 		const digitsResult = validateLastFourDigits(last_four_digits !== undefined ? last_four_digits : lastFourDigits);
 		if (!digitsResult.valid) {
 			return c.json({ error: digitsResult.error }, 400);
@@ -202,9 +226,9 @@ creditCardsRouter.post('/workspaces/:workspaceId/credit-cards', async (c) => {
 			.prepare(`
 				INSERT INTO credit_cards (
 					id, workspace_id, name, brand, limit_amount, closing_day, due_day, best_purchase_day, color,
-					card_type, last_four_digits, bank_name, institution, card_tier
+					card_type, last_four_digits, bank_name, institution, card_tier, registered_for, expires_at
 				)
-				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 			`)
 			.bind(
 				cardId,
@@ -220,7 +244,9 @@ creditCardsRouter.post('/workspaces/:workspaceId/credit-cards', async (c) => {
 				digitsResult.value,
 				bankNameVal,
 				institutionVal,
-				cardTierVal
+				cardTierVal,
+				registeredForVal,
+				expiresAtVal
 			)
 			.run();
 
@@ -240,6 +266,8 @@ creditCardsRouter.post('/workspaces/:workspaceId/credit-cards', async (c) => {
 				bank_name: bankNameVal,
 				institution: institutionVal,
 				card_tier: cardTierVal,
+				registered_for: registeredForVal,
+				expires_at: expiresAtVal,
 				card_image_url: null,
 				created_at: new Date().toISOString(),
 			},
@@ -269,7 +297,7 @@ creditCardsRouter.get('/workspaces/:workspaceId/credit-cards', async (c) => {
 		const { results } = await db
 			.prepare(`
 				SELECT id, workspace_id, name, brand, limit_amount, closing_day, due_day, best_purchase_day, color,
-				       card_type, last_four_digits, bank_name, institution, card_tier, card_image_url, created_at
+				       card_type, last_four_digits, bank_name, institution, card_tier, registered_for, expires_at, card_image_url, created_at
 				FROM credit_cards
 				WHERE workspace_id = ?
 				ORDER BY name ASC
@@ -304,7 +332,7 @@ creditCardsRouter.get('/workspaces/:workspaceId/credit-cards/:id', async (c) => 
 		const card = await db
 			.prepare(`
 				SELECT id, workspace_id, name, brand, limit_amount, closing_day, due_day, best_purchase_day, color,
-				       card_type, last_four_digits, bank_name, institution, card_tier, card_image_url, created_at
+				       card_type, last_four_digits, bank_name, institution, card_tier, registered_for, expires_at, card_image_url, created_at
 				FROM credit_cards
 				WHERE id = ? AND workspace_id = ?
 			`)
@@ -412,13 +440,29 @@ async function updateCreditCardHandler(c: any, workspaceId: string, cardId: stri
 		const colorRaw = body.color !== undefined ? body.color : existingCard.color;
 		const color = colorRaw ? String(colorRaw).trim() : '#000000';
 
+		const registeredForRaw = body.registered_for !== undefined ? body.registered_for : (body.registeredFor !== undefined ? body.registeredFor : existingCard.registered_for);
+		const registeredFor = registeredForRaw ? String(registeredForRaw).trim() : null;
+
+		const expiresAtRaw = body.expires_at !== undefined ? body.expires_at : (body.expiresAt !== undefined ? body.expiresAt : existingCard.expires_at);
+		const expiresAt = expiresAtRaw ? String(expiresAtRaw).trim() : null;
+
+		const isVirtualUpdated = cardType && cardType.startsWith('virtual_');
+		if (isVirtualUpdated && (!registeredFor || registeredFor === '')) {
+			return c.json({ error: 'O campo "Cadastrado em / Vinculado a" é obrigatório para cartões virtuais.' }, 400);
+		}
+
+		if (cardType === 'virtual_temporary' && (!expiresAt || expiresAt === '')) {
+			return c.json({ error: 'O campo "Validade / Expiração" é obrigatório para cartões virtuais temporários.' }, 400);
+		}
+
 		const bestPurchaseDay = calcularMelhorDiaCompra(closingDay);
 
 		await db
 			.prepare(`
 				UPDATE credit_cards
 				SET name = ?, brand = ?, limit_amount = ?, closing_day = ?, due_day = ?, best_purchase_day = ?, color = ?,
-				    card_type = ?, last_four_digits = ?, bank_name = ?, institution = ?, card_tier = ?
+				    card_type = ?, last_four_digits = ?, bank_name = ?, institution = ?, card_tier = ?,
+				    registered_for = ?, expires_at = ?
 				WHERE id = ? AND workspace_id = ?
 			`)
 			.bind(
@@ -434,6 +478,8 @@ async function updateCreditCardHandler(c: any, workspaceId: string, cardId: stri
 				bankName,
 				institution,
 				cardTier,
+				registeredFor,
+				expiresAt,
 				cardId,
 				workspaceId
 			)
@@ -455,6 +501,8 @@ async function updateCreditCardHandler(c: any, workspaceId: string, cardId: stri
 				bank_name: bankName,
 				institution,
 				card_tier: cardTier,
+				registered_for: registeredFor,
+				expires_at: expiresAt,
 				card_image_url: existingCard.card_image_url ?? null,
 				created_at: existingCard.created_at,
 			},
@@ -498,7 +546,7 @@ creditCardsRouter.get('/cards/:id', async (c) => {
 		const card = await db
 			.prepare(`
 				SELECT id, workspace_id, name, brand, limit_amount, closing_day, due_day, best_purchase_day, color,
-				       card_type, last_four_digits, bank_name, institution, card_tier, card_image_url, created_at
+				       card_type, last_four_digits, bank_name, institution, card_tier, registered_for, expires_at, card_image_url, created_at
 				FROM credit_cards
 				WHERE id = ?
 			`)

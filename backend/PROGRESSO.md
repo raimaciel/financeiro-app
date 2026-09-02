@@ -935,6 +935,58 @@ Permitir que os administradores editem o nome completo, status de ativação da 
 ### Pendências
 - Nenhuma pendência.
 
+---
+
+## 24. [2026-09-02 13:21] - Barra de Filtros, Ordenação e Rastreabilidade de Cartões Virtuais
+
+### O que foi feito
+1. **Estrutura de Dados e Backend (`backend/src/routes/credit-cards.ts` e migração D1)**:
+   - Criada migração `0010_virtual_cards_enhancements.sql` adicionando as colunas `registered_for VARCHAR(150)` e `expires_at DATETIME` na tabela `credit_cards`.
+   - Executada a migração na base D1 remota do Cloudflare (`financeiro_db`).
+   - Expandido o enum de `card_type` para suportar `'physical' | 'virtual_permanent' | 'virtual_temporary' | 'virtual_app_linked'`.
+   - Implementada a validação que torna `registered_for` obrigatório para qualquer `card_type` que inicie com `virtual_` (garantindo rastreabilidade e segurança) e `expires_at` obrigatório para `virtual_temporary`.
+   - Atualizados endpoints GET, POST, PUT e PATCH para retornar e persistir `bank`, `registered_for`, `expires_at`.
+   - Adicionados testes de integração em `backend/tests/credit-cards.test.ts`.
+2. **Componente de Filtros e Ordenação (`frontend/src/components/CreditCardFilters.tsx`)**:
+   - Implementada a barra de filtros horizontal responsiva entre o cabeçalho e os cards:
+     - Select de **Banco** (opções dinâmicas dos bancos cadastrados + "Todos").
+     - Select de **Bandeira** (opções dinâmicas das bandeiras cadastradas + "Todas").
+     - Select de **Tipo de Cartão** (Físico, Virtual Permanente, Virtual Temporário 24h, Virtual Vinculado a App).
+     - Select de **Cadastrado em** (aparece dinamicamente se houver cartões virtuais com `registered_for`).
+     - Select de **Ordenar por** (Nome A-Z, Limite, Dia de Vencimento, Dia de Fechamento, Data de Expiração).
+     - Botão toggle de direção (`↑/↓` - crescente / decrescente).
+     - Contador dinâmico "Mostrando X de Y cartões".
+     - Botão de "Limpar Filtros" e persistência automática no `localStorage` (`credit_cards_filters`).
+     - Versão mobile com botão colapsável "Filtros e Ordenação" em Dialog.
+3. **Formulário de Criação/Edição e Visual do Card (`frontend/src/pages/CreditCards.tsx`)**:
+   - Campo "Cadastrado em / Vinculado a *" com `<datalist>` de autocompletação baseado nos cartões já cadastrados pelo usuário.
+   - Campo "Validade / Expiração *" com seletor de data/hora para cartões temporários.
+   - Badges estilizados por tipo:
+     - Físico -> `🪪 Físico`
+     - Virtual Permanente -> `♾️ Virtual` (badge azul)
+     - Virtual Temporário -> `⏱️ 24h (restam Xh)` ou `⏱️ Expirado` (badge amarelo/âmbar ou cinza com reordenação para o final)
+     - Virtual Vinculado a App -> `🔗 App / Site` (badge roxo)
+   - Exibição de `🔒 Cadastrado em: {registered_for}` logo abaixo do nome do cartão para qualquer cartão virtual.
+4. **Validação e Deploy**:
+   - **159 testes passando no Backend (100%) em 21 arquivos**.
+   - **59 testes passando no Frontend (100%) em 13 arquivos**.
+   - Build do Frontend e deploy no Cloudflare Pages: `https://financeiro-app-6wf.pages.dev` (Preview `https://28ccabfe.financeiro-app-6wf.pages.dev`).
+   - Deploy do Backend Worker no Cloudflare Workers: `https://backend.raimaciel.workers.dev` (Versão `fcb02787-bff9-4673-a92a-7f12c9f8bf33`).
+
+### Arquivos modificados
+- `backend/migrations/0010_virtual_cards_enhancements.sql`: Migração D1.
+- `backend/src/routes/credit-cards.ts`: Endpoints com suporte a rastreabilidade e expiração de virtuais.
+- `backend/tests/credit-cards.test.ts`: Testes unitários/integração de cartões virtuais.
+- `frontend/src/types/index.ts`: Tipos TypeScript `CardType` e propriedades de `CreditCard`.
+- `frontend/src/components/CreditCardFilters.tsx`: Novo componente de barra de filtros.
+- `frontend/src/pages/CreditCards.tsx`: Integração de filtros, rastreabilidade, expiração e badges.
+- `frontend/src/tests/CreditCards.test.tsx`: Testes de integração do frontend.
+- `backend/PROGRESSO.md` e `PROGRESSO.md`: Registro da implementação.
+
+### Pendências
+- Nenhuma pendência.
+
+
 
 
 

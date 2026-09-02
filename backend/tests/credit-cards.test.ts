@@ -452,5 +452,77 @@ describe('Credit Cards Router & Card Identification', () => {
 		const res = await app.fetch(req, env);
 		expect(res.status).toBe(403);
 	});
+
+	it('deve validar e criar cartões virtuais (permanente, temporário e app-linked)', async () => {
+		const env = createEnvMock({
+			workspace_members: [memberRow],
+		});
+
+		// 1. Tentar criar virtual sem registered_for (deve falhar com 400)
+		const invalidReq = new Request(`http://localhost/workspaces/${WORKSPACE_ID}/credit-cards`, {
+			method: 'POST',
+			headers: {
+				'Content-Type': 'application/json',
+				Authorization: `Bearer ${token}`,
+			},
+			body: JSON.stringify({
+				name: 'Virtual Sem Registro',
+				card_type: 'virtual_permanent',
+				closing_day: 15,
+				due_day: 22,
+			}),
+		});
+		const invalidRes = await app.fetch(invalidReq, env);
+		expect(invalidRes.status).toBe(400);
+		const errData: any = await invalidRes.json();
+		expect(errData.error).toContain('Cadastrado em / Vinculado a');
+
+		// 2. Criar virtual permanente com registered_for com sucesso
+		const permReq = new Request(`http://localhost/workspaces/${WORKSPACE_ID}/credit-cards`, {
+			method: 'POST',
+			headers: {
+				'Content-Type': 'application/json',
+				Authorization: `Bearer ${token}`,
+			},
+			body: JSON.stringify({
+				name: 'Cartão Netflix',
+				card_type: 'virtual_permanent',
+				registered_for: 'Netflix',
+				bank_name: 'Nubank',
+				brand: 'Mastercard',
+				closing_day: 15,
+				due_day: 22,
+			}),
+		});
+		const permRes = await app.fetch(permReq, env);
+		expect(permRes.status).toBe(201);
+		const permData: any = await permRes.json();
+		expect(permData.card_type).toBe('virtual_permanent');
+		expect(permData.registered_for).toBe('Netflix');
+		expect(permData.bank).toBe('Nubank');
+
+		// 3. Criar virtual temporário com expires_at
+		const tempReq = new Request(`http://localhost/workspaces/${WORKSPACE_ID}/credit-cards`, {
+			method: 'POST',
+			headers: {
+				'Content-Type': 'application/json',
+				Authorization: `Bearer ${token}`,
+			},
+			body: JSON.stringify({
+				name: 'Cartão 24h Compra',
+				card_type: 'virtual_temporary',
+				registered_for: 'Loja Teste',
+				expires_at: '2026-09-03T18:00:00Z',
+				closing_day: 10,
+				due_day: 20,
+			}),
+		});
+		const tempRes = await app.fetch(tempReq, env);
+		expect(tempRes.status).toBe(201);
+		const tempData: any = await tempRes.json();
+		expect(tempData.card_type).toBe('virtual_temporary');
+		expect(tempData.registered_for).toBe('Loja Teste');
+		expect(tempData.expires_at).toBe('2026-09-03T18:00:00Z');
+	});
 });
 
