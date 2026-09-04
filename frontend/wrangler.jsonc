@@ -1,6 +1,0 @@
-{
-  "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "financeiro-app",
-  "account_id": "9eca351a5191c9fc27fcdc6ba7ce02f9",
-  "pages_build_output_dir": "dist"
-}
