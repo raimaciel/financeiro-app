@@ -6,6 +6,8 @@
 	"compatibility_flags": [
 		"nodejs_compat"
 	],
+	"account_id": "9eca351a5191c9fc27fcdc6ba7ce02f9",
+	"workers_dev": true,
 	"d1_databases": [
 		{
 			"binding": "financeiro_db",
