@@ -1,8 +1,8 @@
 import React, { useState, useMemo } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import api from "@/lib/api";
+import { useWorkspace } from "@/contexts/WorkspaceContext";
 import type {
-  Workspace,
   Category,
   CreditCard,
   RecurringTransaction,
@@ -90,8 +90,10 @@ const EMPTY_FORM: FormState = {
 export default function RecurringTransactions() {
   const queryClient = useQueryClient();
 
+  const { selectedWorkspaceId, selectedWorkspace } = useWorkspace();
+  const canEdit = selectedWorkspace?.role !== "viewer";
+
   // Estados principais
-  const [selectedWorkspaceId, setSelectedWorkspaceId] = useState<string>("");
   const [activeTabFilter, setActiveTabFilter] = useState<"all" | "active" | "paused" | "expense" | "income">("all");
   const [searchQuery, setSearchQuery] = useState("");
 
@@ -106,29 +108,6 @@ export default function RecurringTransactions() {
 
   // Mensagens de feedback
   const [toastMessage, setToastMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
-
-  // 1. Busca Workspaces
-  const { data: workspaces = [] } = useQuery<Workspace[]>({
-    queryKey: ["workspaces"],
-    queryFn: async () => {
-      const res = await api.get("/workspaces");
-      return res.data;
-    },
-  });
-
-  // Define workspace inicial
-  React.useEffect(() => {
-    if (workspaces.length > 0 && !selectedWorkspaceId) {
-      setSelectedWorkspaceId(workspaces[0].id);
-    }
-  }, [workspaces, selectedWorkspaceId]);
-
-  const activeWorkspace = useMemo(
-    () => workspaces.find((w) => w.id === selectedWorkspaceId),
-    [workspaces, selectedWorkspaceId]
-  );
-
-  const canEdit = activeWorkspace?.role !== "viewer";
 
   // 2. Busca Categorias do Workspace
   const { data: categories = [] } = useQuery<Category[]>({
@@ -360,21 +339,6 @@ export default function RecurringTransactions() {
 
         {/* Workspace + Botões de Ação */}
         <div className="flex flex-wrap items-center gap-3">
-          {workspaces.length > 1 && (
-            <Select value={selectedWorkspaceId} onValueChange={setSelectedWorkspaceId}>
-              <SelectTrigger className="w-[180px] bg-white">
-                <SelectValue placeholder="Workspace" />
-              </SelectTrigger>
-              <SelectContent>
-                {workspaces.map((ws) => (
-                  <SelectItem key={ws.id} value={ws.id}>
-                    {ws.name} ({ws.role})
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          )}
-
           <Button
             variant="outline"
             disabled={summary.active_count === 0 || generateMutation.isPending || !canEdit}

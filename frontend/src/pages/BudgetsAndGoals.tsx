@@ -1,8 +1,8 @@
 import React, { useState, useMemo } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import api from "@/lib/api";
+import { useWorkspace } from "@/contexts/WorkspaceContext";
 import type {
-  Workspace,
   Category,
   Budget,
   BudgetListResponse,
@@ -73,8 +73,10 @@ interface GoalFormState {
 export default function BudgetsAndGoals() {
   const queryClient = useQueryClient();
 
+  const { selectedWorkspaceId, selectedWorkspace } = useWorkspace();
+  const canEdit = selectedWorkspace?.role !== "viewer";
+
   // Estados
-  const [selectedWorkspaceId, setSelectedWorkspaceId] = useState<string>("");
   const [selectedMonth, setSelectedMonth] = useState<string>(getCurrentMonthStr());
   const [activeTab, setActiveTab] = useState<"budgets" | "goals">("budgets");
 
@@ -106,27 +108,6 @@ export default function BudgetsAndGoals() {
 
   // Mensagem toast
   const [toastMessage, setToastMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
-
-  // 1. Workspaces
-  const { data: workspaces = [] } = useQuery<Workspace[]>({
-    queryKey: ["workspaces"],
-    queryFn: async () => {
-      const res = await api.get("/workspaces");
-      return res.data;
-    },
-  });
-
-  React.useEffect(() => {
-    if (workspaces.length > 0 && !selectedWorkspaceId) {
-      setSelectedWorkspaceId(workspaces[0].id);
-    }
-  }, [workspaces, selectedWorkspaceId]);
-
-  const activeWorkspace = useMemo(
-    () => workspaces.find((w) => w.id === selectedWorkspaceId),
-    [workspaces, selectedWorkspaceId]
-  );
-  const canEdit = activeWorkspace?.role !== "viewer";
 
   // 2. Categorias
   const { data: categories = [] } = useQuery<Category[]>({
@@ -362,21 +343,6 @@ export default function BudgetsAndGoals() {
 
         {/* Workspace + Seletor de Mês + Botões */}
         <div className="flex flex-wrap items-center gap-3">
-          {workspaces.length > 1 && (
-            <Select value={selectedWorkspaceId} onValueChange={setSelectedWorkspaceId}>
-              <SelectTrigger className="w-[180px] bg-white">
-                <SelectValue placeholder="Workspace" />
-              </SelectTrigger>
-              <SelectContent>
-                {workspaces.map((ws) => (
-                  <SelectItem key={ws.id} value={ws.id}>
-                    {ws.name} ({ws.role})
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          )}
-
           {activeTab === "budgets" ? (
             <>
               <Input

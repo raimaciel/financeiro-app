@@ -2,8 +2,8 @@ import React, { useState, useMemo, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import api from "@/lib/api";
+import { useWorkspace } from "@/contexts/WorkspaceContext";
 import type {
-  Workspace,
   Category,
   CreditCard,
   ImportedTransaction,
@@ -112,7 +112,6 @@ export default function ImportTransactions() {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Estados principais
-  const [selectedWorkspaceId, setSelectedWorkspaceId] = useState<string>("ws-1");
   const [selectedCreditCardId, setSelectedCreditCardId] = useState<string>("none");
   const [selectedBank, setSelectedBank] = useState<string>("auto");
 
@@ -137,27 +136,9 @@ export default function ImportTransactions() {
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
-  // 1. Busca Workspaces
-  const { data: workspaces = [] } = useQuery<Workspace[]>({
-    queryKey: ["workspaces"],
-    queryFn: async () => {
-      const res = await api.get("/workspaces");
-      return res.data;
-    },
-  });
-
-  React.useEffect(() => {
-    if (workspaces.length > 0 && !selectedWorkspaceId) {
-      setSelectedWorkspaceId(workspaces[0].id);
-    }
-  }, [workspaces, selectedWorkspaceId]);
-
-  const activeWorkspace = useMemo(
-    () => workspaces.find((w) => w.id === selectedWorkspaceId),
-    [workspaces, selectedWorkspaceId]
-  );
-
-  const canEdit = activeWorkspace?.role !== "viewer";
+  const { selectedWorkspaceId, selectedWorkspace } = useWorkspace();
+  const activeWorkspace = selectedWorkspace;
+  const canEdit = selectedWorkspace?.role !== "viewer";
 
   // 2. Busca Categorias do Workspace
   const { data: categories = [] } = useQuery<Category[]>({
@@ -485,24 +466,7 @@ export default function ImportTransactions() {
           </p>
         </div>
 
-        {/* Seletor de Workspace */}
-        {workspaces.length > 1 && (
-          <div className="flex items-center gap-2">
-            <Label className="text-xs font-semibold text-slate-500 whitespace-nowrap">Workspace:</Label>
-            <Select value={selectedWorkspaceId} onValueChange={setSelectedWorkspaceId}>
-              <SelectTrigger className="w-[200px] bg-white text-xs font-medium">
-                <SelectValue placeholder="Selecione o Workspace" />
-              </SelectTrigger>
-              <SelectContent>
-                {workspaces.map((ws) => (
-                  <SelectItem key={ws.id} value={ws.id} className="text-xs">
-                    {ws.name} ({ws.role})
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-        )}
+
       </div>
 
       {/* Alertas */}

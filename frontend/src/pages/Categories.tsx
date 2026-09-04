@@ -1,7 +1,8 @@
 import React, { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import api from "@/lib/api";
-import type { Category, Workspace } from "@/types";
+import type { Category } from "@/types";
+import { useWorkspace } from "@/contexts/WorkspaceContext";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -120,11 +121,6 @@ const COLORS = [
 
 // ── API calls ──────────────────────────────────────────────────────────────
 
-const fetchWorkspaces = async (): Promise<Workspace[]> => {
-  const res = await api.get("/workspaces");
-  return res.data;
-};
-
 const fetchCategories = async (workspaceId: string): Promise<Category[]> => {
   const res = await api.get(`/workspaces/${workspaceId}/categories`);
   return res.data;
@@ -192,7 +188,14 @@ export default function Categories() {
   const queryClient = useQueryClient();
 
   // workspace selecionado
-  const [selectedWorkspaceId, setSelectedWorkspaceId] = useState<string>("");
+  const {
+    workspaces,
+    selectedWorkspaceId,
+    setSelectedWorkspaceId,
+    selectedWorkspace,
+    hasWorkspace,
+    isLoading: loadingWorkspaces,
+  } = useWorkspace();
 
   // toast
   const [toast, setToast] = useState<ToastState | null>(null);
@@ -216,16 +219,6 @@ export default function Categories() {
   const [deleteError, setDeleteError] = useState("");
 
   // ── Queries ──────────────────────────────────────────────────────────────
-
-  const { data: workspaces = [], isLoading: loadingWorkspaces } = useQuery({
-    queryKey: ["workspaces"],
-    queryFn: fetchWorkspaces,
-    onSuccess: (data: Workspace[]) => {
-      if (data.length > 0 && !selectedWorkspaceId) {
-        setSelectedWorkspaceId(data[0].id);
-      }
-    },
-  } as any);
 
   const {
     data: categories = [],
@@ -309,6 +302,11 @@ export default function Categories() {
     e.preventDefault();
     setFormError("");
 
+    if (!hasWorkspace) {
+      setFormError("Nenhum workspace selecionado. Crie ou selecione um workspace primeiro.");
+      return;
+    }
+
     if (!form.name.trim()) {
       setFormError("O nome da categoria é obrigatório.");
       return;
@@ -324,8 +322,6 @@ export default function Categories() {
   const isMutating = createMutation.isPending || updateMutation.isPending;
 
   const filtered = categories.filter((c: Category) => c.type === activeTab);
-
-  const selectedWorkspace = workspaces.find((w: Workspace) => w.id === selectedWorkspaceId);
 
   // ── Render ─────────────────────────────────────────────────────────────────
 
@@ -361,35 +357,10 @@ export default function Categories() {
         </Button>
       </div>
 
-      {/* Seletor de workspace */}
-      {loadingWorkspaces ? (
-        <div className="flex items-center gap-2 text-sm text-muted-foreground">
-          <Loader2 className="h-4 w-4 animate-spin" /> Carregando workspaces...
-        </div>
-      ) : workspaces.length === 0 ? (
+      {/* Alerta quando não houver workspace selecionado */}
+      {!hasWorkspace && !loadingWorkspaces && (
         <div className="rounded-md border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
-          Você ainda não tem nenhum workspace. Crie um workspace primeiro para adicionar categorias.
-        </div>
-      ) : (
-        <div className="flex items-center gap-3">
-          <Label htmlFor="workspace-select" className="text-sm font-medium shrink-0">
-            Workspace:
-          </Label>
-          <Select
-            value={selectedWorkspaceId}
-            onValueChange={setSelectedWorkspaceId}
-          >
-            <SelectTrigger id="workspace-select" className="w-64">
-              <SelectValue placeholder="Selecione um workspace" />
-            </SelectTrigger>
-            <SelectContent>
-              {workspaces.map((ws: Workspace) => (
-                <SelectItem key={ws.id} value={ws.id}>
-                  {ws.name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          Você ainda não tem nenhum workspace selecionado. Crie ou selecione um workspace no topo primeiro para adicionar categorias.
         </div>
       )}
 

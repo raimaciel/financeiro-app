@@ -1,10 +1,15 @@
 import React from "react";
 import { NavLink, Outlet, useNavigate } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
 import { useAuth } from "@/hooks/useAuth";
-import api from "@/lib/api";
-import type { Workspace } from "@/types";
+import { useWorkspace } from "@/contexts/WorkspaceContext";
 import { Button } from "@/components/ui/button";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { NotificationsPopover } from "@/components/NotificationsPopover";
 import {
@@ -18,6 +23,9 @@ import {
   Target,
   ShieldCheck,
   LogOut,
+  Briefcase,
+  Plus,
+  Loader2,
 } from "lucide-react";
 
 export const Layout: React.FC = () => {
@@ -31,17 +39,15 @@ export const Layout: React.FC = () => {
 
   const isAdmin = user?.is_admin || (user as any)?.isAdmin;
 
-  // Buscar workspace ativo para alimentar o sino de notificações
-  const { data: workspaces = [] } = useQuery<Workspace[]>({
-    queryKey: ["workspaces"],
-    queryFn: async () => {
-      const res = await api.get("/workspaces");
-      return res.data;
-    },
-    enabled: !!user,
-  });
-
-  const activeWorkspaceId = workspaces.length > 0 ? workspaces[0].id : "";
+  const {
+    workspaces,
+    selectedWorkspaceId,
+    selectedWorkspace,
+    setSelectedWorkspaceId,
+    hasWorkspace,
+    isLoading: loadingWorkspaces,
+  } = useWorkspace();
+  const activeWorkspaceId = selectedWorkspaceId;
 
   const userInitials = user?.name
     ? user.name
@@ -173,6 +179,49 @@ export const Layout: React.FC = () => {
           </div>
 
           <div className="flex items-center gap-3">
+            {/* Seletor Global de Workspace */}
+            {loadingWorkspaces ? (
+              <div className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-muted-foreground bg-slate-50 border rounded-md">
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                <span className="hidden sm:inline">Carregando...</span>
+              </div>
+            ) : hasWorkspace ? (
+              <Select value={selectedWorkspaceId} onValueChange={setSelectedWorkspaceId}>
+                <SelectTrigger
+                  id="global-workspace-select"
+                  className="h-9 w-40 sm:w-48 bg-white border-slate-200 text-xs sm:text-sm font-medium"
+                >
+                  <div className="flex items-center gap-2 truncate">
+                    <Briefcase className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                    <span className="truncate">{selectedWorkspace?.name || "Workspace"}</span>
+                  </div>
+                </SelectTrigger>
+                <SelectContent align="end">
+                  {workspaces.map((ws) => (
+                    <SelectItem key={ws.id} value={ws.id} className="text-xs sm:text-sm">
+                      <div className="flex items-center justify-between gap-2 w-full">
+                        <span>{ws.name}</span>
+                        {ws.role && (
+                          <span className="text-[10px] text-muted-foreground uppercase bg-slate-100 px-1.5 py-0.5 rounded">
+                            {ws.role}
+                          </span>
+                        )}
+                      </div>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            ) : (
+              <NavLink
+                to="/workspaces"
+                className="text-xs font-medium text-amber-700 hover:text-amber-800 bg-amber-50 hover:bg-amber-100 px-2.5 py-1.5 rounded-md border border-amber-200 transition-colors flex items-center gap-1.5"
+                title="Nenhum workspace selecionado. Clique para criar um."
+              >
+                <Plus className="h-3.5 w-3.5" />
+                <span className="hidden sm:inline">Criar Workspace</span>
+              </NavLink>
+            )}
+
             {/* Sino de Notificações Global */}
             {activeWorkspaceId && (
               <NotificationsPopover workspaceId={activeWorkspaceId} />

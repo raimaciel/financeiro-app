@@ -2,7 +2,8 @@ import React, { useState, useMemo, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import api from "@/lib/api";
-import type { Transaction, TransactionSummary, Workspace, Category, CreditCard } from "@/types";
+import type { Transaction, TransactionSummary, Category, CreditCard } from "@/types";
+import { useWorkspace } from "@/contexts/WorkspaceContext";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -182,11 +183,6 @@ function formatDateHeader(dateStr: string): string {
 
 // ── API calls ──────────────────────────────────────────────────────────────
 
-const fetchWorkspaces = async (): Promise<Workspace[]> => {
-  const res = await api.get("/workspaces");
-  return res.data;
-};
-
 const fetchCategories = async (workspaceId: string): Promise<Category[]> => {
   const res = await api.get(`/workspaces/${workspaceId}/categories`);
   return res.data;
@@ -323,7 +319,10 @@ export default function Transactions() {
   const queryClient = useQueryClient();
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
-  const [selectedWorkspaceId, setSelectedWorkspaceId] = useState<string>("");
+  const {
+    selectedWorkspaceId,
+    hasWorkspace,
+  } = useWorkspace();
   const [selectedMonth, setSelectedMonth] = useState<string>(getCurrentYearMonth());
 
   // Filtros
@@ -357,16 +356,6 @@ export default function Transactions() {
   const [deleteTarget, setDeleteTarget] = useState<Transaction | null>(null);
 
   // ── Queries ──────────────────────────────────────────────────────────────
-
-  const { data: workspaces = [], isLoading: loadingWorkspaces } = useQuery({
-    queryKey: ["workspaces"],
-    queryFn: fetchWorkspaces,
-    onSuccess: (data: Workspace[]) => {
-      if (data.length > 0 && !selectedWorkspaceId) {
-        setSelectedWorkspaceId(data[0].id);
-      }
-    },
-  } as any);
 
   const { data: categories = [] } = useQuery({
     queryKey: ["categories", selectedWorkspaceId],
@@ -585,6 +574,11 @@ export default function Transactions() {
     e.preventDefault();
     setFormError("");
 
+    if (!hasWorkspace) {
+      setFormError("Nenhum workspace selecionado. Crie ou selecione um workspace primeiro.");
+      return;
+    }
+
     if (!form.description.trim()) {
       setFormError("A descrição do lançamento é obrigatória.");
       return;
@@ -688,31 +682,10 @@ export default function Transactions() {
         </Button>
       </div>
 
-      {/* Barra de Seleção de Workspace e Navegação Mensal */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-white p-4 rounded-xl border shadow-sm">
-        {/* Seletor de Workspace */}
-        <div className="flex items-center gap-3">
-          <Label htmlFor="workspace-select" className="text-sm font-medium shrink-0">
-            Workspace:
-          </Label>
-          {loadingWorkspaces ? (
-            <div className="flex items-center gap-2 text-sm text-muted-foreground">
-              <Loader2 className="h-4 w-4 animate-spin" /> Carregando...
-            </div>
-          ) : (
-            <Select value={selectedWorkspaceId} onValueChange={setSelectedWorkspaceId}>
-              <SelectTrigger id="workspace-select" className="w-56">
-                <SelectValue placeholder="Selecione um workspace" />
-              </SelectTrigger>
-              <SelectContent>
-                {workspaces.map((ws: Workspace) => (
-                  <SelectItem key={ws.id} value={ws.id}>
-                    {ws.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          )}
+      {/* Barra de Navegação Mensal */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white p-4 rounded-xl border shadow-sm">
+        <div className="text-sm font-semibold text-slate-700">
+          Período de Referência
         </div>
 
         {/* Navegador de Mês */}

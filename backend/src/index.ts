@@ -101,6 +101,21 @@ app.post('/register', async (c) => {
 
 		const userId = result.meta.last_row_id;
 
+		// Criação automática do workspace padrão para o novo usuário
+		const workspaceId = crypto.randomUUID();
+		const memberId = crypto.randomUUID();
+		const defaultWorkspaceName = 'Meu Workspace';
+
+		await db
+			.prepare('INSERT INTO workspaces (id, name, type) VALUES (?, ?, ?)')
+			.bind(workspaceId, defaultWorkspaceName, 'personal')
+			.run();
+
+		await db
+			.prepare('INSERT INTO workspace_members (id, workspace_id, user_id, role) VALUES (?, ?, ?, ?)')
+			.bind(memberId, workspaceId, String(userId), 'owner')
+			.run();
+
 		// Registra o uso do código de convite se foi um código do banco
 		if (inviteRecordId) {
 			await db

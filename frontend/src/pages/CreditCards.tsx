@@ -1,7 +1,8 @@
 import React, { useState, useRef, useMemo, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import api from "@/lib/api";
-import type { CreditCard, CardType, Invoice, Workspace, InvoiceForecastResponse } from "@/types";
+import type { CreditCard, CardType, Invoice, InvoiceForecastResponse } from "@/types";
+import { useWorkspace } from "@/contexts/WorkspaceContext";
 import { BrandBadge, BRAND_ICONS } from "@/components/BrandIcons";
 import { CreditCardFilters, DEFAULT_FILTERS, type CardFilterState } from "@/components/CreditCardFilters";
 import { Button } from "@/components/ui/button";
@@ -138,11 +139,6 @@ function getTemporaryCardStatus(expiresAt?: string | null): {
 }
 
 // Queries da API
-const fetchWorkspaces = async (): Promise<Workspace[]> => {
-  const res = await api.get("/workspaces");
-  return res.data;
-};
-
 const fetchCards = async (workspaceId: string): Promise<CreditCard[]> => {
   const res = await api.get(`/workspaces/${workspaceId}/credit-cards`);
   return res.data;
@@ -165,6 +161,9 @@ const createCard = async ({
   workspaceId: string;
   data: Partial<CreditCard>;
 }) => {
+  if (!workspaceId || workspaceId.trim() === "") {
+    throw new Error("Nenhum workspace selecionado. Crie ou selecione um workspace primeiro.");
+  }
   const res = await api.post(`/workspaces/${workspaceId}/credit-cards`, data);
   return res.data;
 };
@@ -178,6 +177,9 @@ const updateCard = async ({
   id: string;
   data: Partial<CreditCard>;
 }) => {
+  if (!workspaceId || workspaceId.trim() === "") {
+    throw new Error("Nenhum workspace selecionado. Crie ou selecione um workspace primeiro.");
+  }
   const res = await api.put(`/workspaces/${workspaceId}/credit-cards/${id}`, data);
   return res.data;
 };
@@ -507,7 +509,13 @@ export default function CreditCards() {
   const queryClient = useQueryClient();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const [selectedWorkspaceId, setSelectedWorkspaceId] = useState<string>("");
+  const {
+    workspaces,
+    selectedWorkspaceId,
+    setSelectedWorkspaceId,
+    selectedWorkspace,
+    hasWorkspace,
+  } = useWorkspace();
   const [toast, setToast] = useState<ToastState | null>(null);
 
   // Filtros com persistência no sessionStorage (mantém na sessão conforme solicitado)
@@ -558,19 +566,7 @@ export default function CreditCards() {
     setTimeout(() => setToast(null), 3500);
   };
 
-  const { data: workspaces = [] } = useQuery<Workspace[]>({
-    queryKey: ["workspaces"],
-    queryFn: fetchWorkspaces,
-  });
-
-  useEffect(() => {
-    if (workspaces.length > 0 && !selectedWorkspaceId) {
-      setSelectedWorkspaceId(workspaces[0].id);
-    }
-  }, [workspaces, selectedWorkspaceId]);
-
-  const activeWorkspace = workspaces.find((w) => w.id === selectedWorkspaceId);
-  const canEdit = activeWorkspace?.role !== "viewer";
+  const canEdit = selectedWorkspace?.role !== "viewer";
 
   const { data: cards = [], isLoading: loadingCards } = useQuery<CreditCard[]>({
     queryKey: ["credit-cards", selectedWorkspaceId],
@@ -854,6 +850,11 @@ export default function CreditCards() {
     e.preventDefault();
     setFormError("");
 
+    if (!selectedWorkspaceId || selectedWorkspaceId.trim() === "") {
+      setFormError("Nenhum workspace selecionado. Crie ou selecione um workspace primeiro.");
+      return;
+    }
+
     if (!form.name.trim()) {
       setFormError("O nome do cartão é obrigatório.");
       return;
@@ -893,14 +894,14 @@ export default function CreditCards() {
 
     const payload: Partial<CreditCard> = {
       name: form.name.trim(),
-      cardType: form.cardType,
-      bankName: form.bankName ? form.bankName.trim() : undefined,
+      card_type: form.cardType,
+      bank_name: form.bankName ? form.bankName.trim() : undefined,
       brand: form.brand.trim() || undefined,
-      lastFourDigits: form.lastFourDigits ? form.lastFourDigits.trim() : undefined,
+      last_four_digits: form.lastFourDigits ? form.lastFourDigits.trim() : undefined,
       institution: form.institution ? form.institution.trim() : undefined,
-      cardTier: form.cardTier,
-      registeredFor: isVirtualSelected ? form.registeredFor.trim() : undefined,
-      expiresAt: isTemporarySelected && form.expiresAt ? new Date(form.expiresAt).toISOString() : undefined,
+      card_tier: form.cardTier,
+      registered_for: isVirtualSelected ? form.registeredFor.trim() : undefined,
+      expires_at: isTemporarySelected && form.expiresAt ? new Date(form.expiresAt).toISOString() : undefined,
       limit_amount: limitAmount,
       closing_day: closingDay,
       due_day: dueDay,
@@ -978,23 +979,9 @@ export default function CreditCards() {
         </div>
 
         <div className="flex items-center gap-3">
-          {workspaces.length > 1 && (
-            <Select value={selectedWorkspaceId} onValueChange={setSelectedWorkspaceId}>
-              <SelectTrigger className="w-[180px] bg-white">
-                <SelectValue placeholder="Workspace" />
-              </SelectTrigger>
-              <SelectContent>
-                {workspaces.map((ws) => (
-                  <SelectItem key={ws.id} value={ws.id}>
-                    {ws.name} ({ws.role})
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          )}
-
           <Button
-            disabled={!canEdit}
+            disabled={!canEdit || !selectedWorkspaceId}
+            title={!selectedWorkspaceId ? "Crie um workspace primeiro" : undefined}
             onClick={openCreate}
             className="gap-2 font-semibold shadow-xs"
           >
@@ -1027,7 +1014,8 @@ export default function CreditCards() {
             Cadastre seu primeiro cartão de crédito para acompanhar faturas e limites.
           </p>
           <Button
-            disabled={!canEdit}
+            disabled={!canEdit || !selectedWorkspaceId}
+            title={!selectedWorkspaceId ? "Crie um workspace primeiro" : undefined}
             onClick={openCreate}
             className="mt-4 gap-2 font-semibold text-xs"
           >
@@ -1393,7 +1381,12 @@ export default function CreditCards() {
               <Button type="button" variant="outline" onClick={closeModal} disabled={isSubmitting}>
                 Cancelar
               </Button>
-              <Button type="submit" disabled={isSubmitting} className="gap-2 font-semibold">
+              <Button
+                type="submit"
+                disabled={isSubmitting || !selectedWorkspaceId}
+                title={!selectedWorkspaceId ? "Crie um workspace primeiro" : undefined}
+                className="gap-2 font-semibold"
+              >
                 {isSubmitting && <RefreshCw className="h-4 w-4 animate-spin" />}
                 {formMode === "create" ? "Criar Cartão" : "Salvar Alterações"}
               </Button>

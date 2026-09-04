@@ -4,6 +4,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import CreditCards from "@/pages/CreditCards";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter } from "react-router-dom";
+import { WorkspaceProvider } from "@/contexts/WorkspaceContext";
 import api from "@/lib/api";
 
 // Mock do módulo de API
@@ -68,7 +69,7 @@ const mockCards = [
     color: "#1d3557",
     card_type: "virtual_temporary",
     registered_for: "Amazon",
-    expires_at: "2026-09-03T18:00:00Z",
+    expires_at: new Date(Date.now() + 86400000 * 2).toISOString(),
     last_four_digits: "5555",
     bank_name: "Nubank",
     card_tier: "standard",
@@ -106,7 +107,9 @@ function renderCreditCards() {
   return render(
     <QueryClientProvider client={queryClient}>
       <BrowserRouter>
-        <CreditCards />
+        <WorkspaceProvider>
+          <CreditCards />
+        </WorkspaceProvider>
       </BrowserRouter>
     </QueryClientProvider>
   );

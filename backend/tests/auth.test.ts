@@ -64,6 +64,30 @@ describe('POST /register', () => {
 		const res = await app.fetch(req, env);
 		expect(res.status).toBe(409);
 	});
+
+	it('deve registrar usuário com sucesso e criar workspace padrão automaticamente', async () => {
+		const env = createEnvMock({
+			users: [],
+			invite_codes: [
+				{
+					id: 1,
+					code: 'INV-VALID',
+					expires_at: new Date(Date.now() + 86400000).toISOString(),
+					max_uses: 5,
+					uses_count: 0,
+				},
+			],
+		});
+		const req = makeRequest('/register', {
+			method: 'POST',
+			body: { name: 'Novo Usuário', email: 'novo@example.com', password: 'password123', inviteCode: 'INV-VALID' },
+		});
+		const res = await app.fetch(req, env);
+		expect(res.status).toBe(201);
+		const data = await res.json() as any;
+		expect(data.token).toBeDefined();
+		expect(data.user.email).toBe('novo@example.com');
+	});
 });
 
 describe('POST /login', () => {
