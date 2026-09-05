@@ -122,6 +122,105 @@ describe('GET /workspaces/:workspaceId/dashboard', () => {
 		expect(typeof cs.available_limit).toBe('number');
 		expect(typeof cs.usage_percentage).toBe('number');
 	});
+
+	it('deve retornar accounts_balance e total_accounts_balance calculados corretamente', async () => {
+		const mockAccounts = [
+			{
+				id: 'acc-1',
+				workspace_id: WORKSPACE_ID,
+				name: 'Conta Inter',
+				bank_name: 'Banco Inter',
+				color: '#FF7A00',
+				account_type: 'checking',
+				initial_balance: 1000,
+				status: 'active',
+			},
+			{
+				id: 'acc-2',
+				workspace_id: WORKSPACE_ID,
+				name: 'Poupança Caixa',
+				bank_name: 'Caixa',
+				color: '#005CA9',
+				account_type: 'savings',
+				initial_balance: 2500,
+				status: 'active',
+			},
+			{
+				id: 'acc-archived',
+				workspace_id: WORKSPACE_ID,
+				name: 'Conta Antiga',
+				bank_name: 'Banco Antigo',
+				color: '#999999',
+				account_type: 'checking',
+				initial_balance: 500,
+				status: 'archived',
+			},
+		];
+
+		const mockTransactions = [
+			{
+				id: 1,
+				workspace_id: WORKSPACE_ID,
+				account_id: 'acc-1',
+				type: 'income',
+				amount: 500,
+			},
+			{
+				id: 2,
+				workspace_id: WORKSPACE_ID,
+				account_id: 'acc-1',
+				type: 'expense',
+				amount: 200,
+			},
+			{
+				id: 3,
+				workspace_id: WORKSPACE_ID,
+				account_id: 'acc-archived',
+				type: 'income',
+				amount: 1000,
+			},
+		];
+
+		const env = createEnvMock({
+			workspace_members: [memberRow],
+			credit_cards: [],
+			bank_accounts: mockAccounts,
+			transactions: mockTransactions,
+		});
+
+		const tk = await token();
+		const res = await app.fetch(
+			request(`/workspaces/${WORKSPACE_ID}/dashboard`, tk),
+			env
+		);
+
+		expect(res.status).toBe(200);
+		const data = await res.json() as any;
+
+		expect(data).toHaveProperty('accounts_balance');
+		expect(data).toHaveProperty('total_accounts_balance');
+		expect(Array.isArray(data.accounts_balance)).toBe(true);
+
+		// Contas arquivadas não devem constar
+		expect(data.accounts_balance).toHaveLength(2);
+		const ids = data.accounts_balance.map((a: any) => a.id);
+		expect(ids).toContain('acc-1');
+		expect(ids).toContain('acc-2');
+		expect(ids).not.toContain('acc-archived');
+
+		// Conta com receitas e despesas vinculadas (1000 + 500 - 200 = 1300)
+		const acc1 = data.accounts_balance.find((a: any) => a.id === 'acc-1');
+		expect(acc1.initial_balance).toBe(1000);
+		expect(acc1.current_balance).toBe(1300);
+
+		// Conta sem transações vinculadas (initial_balance = current_balance = 2500)
+		const acc2 = data.accounts_balance.find((a: any) => a.id === 'acc-2');
+		expect(acc2.initial_balance).toBe(2500);
+		expect(acc2.current_balance).toBe(2500);
+
+		// Total consolidado: 1300 + 2500 = 3800
+		expect(data.total_accounts_balance).toBe(3800);
+	});
 });
 
 

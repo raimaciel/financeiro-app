@@ -266,6 +266,55 @@ dashboardRouter.get('/workspaces/:workspaceId/dashboard', async (c) => {
 			? Number(((totalUsedLimit / totalCardsLimit) * 100).toFixed(1))
 			: 0;
 
+		// 8. Saldo por Conta Bancária (contas ativas)
+		const accountsResult = await db
+			.prepare(`
+				SELECT 
+					ba.id, 
+					ba.name, 
+					ba.bank_name, 
+					ba.color, 
+					ba.account_type, 
+					ba.initial_balance,
+					COALESCE(SUM(CASE WHEN t.type = 'income' THEN t.amount ELSE 0 END), 0) as total_income,
+					COALESCE(SUM(CASE WHEN t.type = 'expense' THEN t.amount ELSE 0 END), 0) as total_expense
+				FROM bank_accounts ba
+				LEFT JOIN transactions t ON t.account_id = ba.id AND t.workspace_id = ba.workspace_id
+				WHERE ba.workspace_id = ? AND ba.status = 'active'
+				GROUP BY ba.id, ba.name, ba.bank_name, ba.color, ba.account_type, ba.initial_balance
+				ORDER BY ba.name ASC
+			`)
+			.bind(workspaceId)
+			.all<{
+				id: string;
+				name: string;
+				bank_name: string | null;
+				color: string | null;
+				account_type: string;
+				initial_balance: number;
+				total_income: number;
+				total_expense: number;
+			}>();
+
+		const accountsRows = accountsResult.results || [];
+		const accountsBalance = accountsRows.map((acc) => {
+			const initialBal = acc.initial_balance || 0;
+			const currentBal = Number((initialBal + (acc.total_income || 0) - (acc.total_expense || 0)).toFixed(2));
+			return {
+				id: acc.id,
+				name: acc.name,
+				bank_name: acc.bank_name || null,
+				color: acc.color || '#2563eb',
+				account_type: acc.account_type,
+				initial_balance: Number(initialBal.toFixed(2)),
+				current_balance: currentBal,
+			};
+		});
+
+		const totalAccountsBalance = Number(
+			accountsBalance.reduce((sum, acc) => sum + acc.current_balance, 0).toFixed(2)
+		);
+
 		return c.json({
 			month: selectedMonth,
 			summary: {
@@ -290,6 +339,8 @@ dashboardRouter.get('/workspaces/:workspaceId/dashboard', async (c) => {
 				invoices_due_count: upcomingInvoices.length,
 				upcoming_invoices: upcomingInvoices,
 			},
+			accounts_balance: accountsBalance,
+			total_accounts_balance: totalAccountsBalance,
 		});
 	} catch (err) {
 		console.error('Erro ao gerar dados do dashboard:', err);

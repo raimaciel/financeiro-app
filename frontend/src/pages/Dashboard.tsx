@@ -22,6 +22,7 @@ import {
   FileSpreadsheet,
   TrendingDown,
   Wallet,
+  Landmark,
   Calendar,
   ChevronLeft,
   ChevronRight,
@@ -210,6 +211,13 @@ function CustomPieTooltip({ active, payload }: any) {
 
 // ── Componente Principal ───────────────────────────────────────────────────
 
+const ACCOUNT_TYPE_LABELS: Record<string, string> = {
+  checking: "Corrente",
+  savings: "Poupança",
+  investment: "Investimento",
+  cash: "Dinheiro",
+};
+
 export default function Dashboard() {
   const navigate = useNavigate();
   const { selectedWorkspaceId } = useWorkspace();
@@ -248,6 +256,8 @@ export default function Dashboard() {
   const budgetsSummary = budgetsData?.summary;
   const recurringSummary = recurringData?.summary;
   const summary = dashboard?.summary;
+  const accountsBalance = dashboard?.accounts_balance || [];
+  const totalAccountsBalance = dashboard?.total_accounts_balance ?? 0;
   const hasTransactions = (summary?.total_income || 0) > 0 || (summary?.total_expense || 0) > 0;
 
   return (
@@ -454,6 +464,99 @@ export default function Dashboard() {
                 </p>
               </CardContent>
             </Card>
+          </div>
+
+          {/* SEÇÃO: SALDO POR CONTA */}
+          <div className="space-y-3">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <Landmark className="h-5 w-5 text-primary" />
+                <h2 className="text-base font-bold tracking-tight text-slate-900">
+                  Saldo por Conta
+                </h2>
+              </div>
+              {accountsBalance.length > 0 && (
+                <div className="flex items-center gap-2 text-sm bg-slate-50 px-3.5 py-1.5 rounded-lg border">
+                  <span className="text-muted-foreground font-medium">Saldo Total em Contas:</span>
+                  <span
+                    className={`font-bold text-base ${
+                      totalAccountsBalance >= 0 ? "text-green-600" : "text-red-600"
+                    }`}
+                  >
+                    {formatCurrency(totalAccountsBalance)}
+                  </span>
+                </div>
+              )}
+            </div>
+
+            {accountsBalance.length === 0 ? (
+              <Card className="border-dashed bg-slate-50/50 shadow-sm">
+                <CardContent className="flex flex-col sm:flex-row items-center justify-between p-4 gap-4 text-center sm:text-left">
+                  <div className="flex items-center gap-3">
+                    <div className="h-10 w-10 rounded-full bg-blue-50 flex items-center justify-center text-blue-600 shrink-0">
+                      <Landmark className="h-5 w-5" />
+                    </div>
+                    <div>
+                      <p className="text-sm font-semibold text-slate-800">
+                        Nenhuma conta bancária cadastrada
+                      </p>
+                      <p className="text-xs text-muted-foreground">
+                        Cadastre suas contas correntes, poupanças ou investimentos para acompanhar seus saldos em tempo real.
+                      </p>
+                    </div>
+                  </div>
+                  <Button asChild size="sm" variant="outline" className="gap-1.5 shrink-0 font-semibold">
+                    <Link to="/accounts">
+                      <Plus className="h-3.5 w-3.5" />
+                      Cadastrar Conta
+                    </Link>
+                  </Button>
+                </CardContent>
+              </Card>
+            ) : (
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                {accountsBalance.map((acc) => {
+                  const isPositive = acc.current_balance >= 0;
+                  return (
+                    <Card key={acc.id} className="hover:shadow-md transition-shadow relative overflow-hidden bg-white shadow-sm">
+                      <div
+                        className="absolute top-0 left-0 bottom-0 w-1.5"
+                        style={{ backgroundColor: acc.color || "#2563eb" }}
+                      />
+                      <CardContent className="p-4 pl-5">
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center gap-1.5">
+                              <Landmark className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                              <p className="text-sm font-bold text-slate-900 truncate" title={acc.name}>
+                                {acc.name}
+                              </p>
+                            </div>
+                            <p className="text-xs text-muted-foreground truncate mt-0.5">
+                              {acc.bank_name || "Instituição financeira"}
+                            </p>
+                          </div>
+                          <Badge variant="outline" className="text-[10px] font-semibold uppercase px-1.5 py-0 shrink-0 bg-slate-50">
+                            {ACCOUNT_TYPE_LABELS[acc.account_type] || acc.account_type}
+                          </Badge>
+                        </div>
+
+                        <div className="mt-3 flex items-baseline justify-between pt-2 border-t border-slate-100">
+                          <span className="text-xs text-muted-foreground">Saldo atual</span>
+                          <span
+                            className={`text-base font-extrabold tracking-tight ${
+                              isPositive ? "text-green-600" : "text-red-600"
+                            }`}
+                          >
+                            {formatCurrency(acc.current_balance)}
+                          </span>
+                        </div>
+                      </CardContent>
+                    </Card>
+                  );
+                })}
+              </div>
+            )}
           </div>
 
           {/* 2. GRÁFICOS (LINHA/ÁREA E PIE/DONUT) */}

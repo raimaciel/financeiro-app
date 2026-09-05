@@ -98,6 +98,29 @@ export function createD1Mock(rows: Record<string, any[]> = {}) {
 			all: vi.fn(async () => {
 				const key = getTargetKey(sql);
 				if (key && rows[key]) {
+					const lowerSql = sql.toLowerCase();
+					if (key === 'bank_accounts') {
+						let list = [...rows[key]];
+						if (lowerSql.includes("status = 'active'")) {
+							list = list.filter((a: any) => a.status === 'active' || a.status === undefined);
+						}
+						if (lowerSql.includes('left join transactions') && rows['transactions']) {
+							list = list.map((a: any) => {
+								const inc = rows['transactions']
+									.filter((t: any) => (t.account_id === a.id || t.accountId === a.id) && t.type === 'income')
+									.reduce((acc: number, t: any) => acc + Number(t.amount || 0), 0);
+								const exp = rows['transactions']
+									.filter((t: any) => (t.account_id === a.id || t.accountId === a.id) && t.type === 'expense')
+									.reduce((acc: number, t: any) => acc + Number(t.amount || 0), 0);
+								return {
+									...a,
+									total_income: a.total_income ?? inc,
+									total_expense: a.total_expense ?? exp,
+								};
+							});
+						}
+						return { results: list, success: true };
+					}
 					return { results: rows[key] ?? [], success: true };
 				}
 				return { results: [], success: true };

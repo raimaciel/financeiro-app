@@ -1,3 +1,13 @@
+export interface AccountBalance {
+  id: string;
+  name: string;
+  bank_name?: string | null;
+  color?: string | null;
+  account_type: AccountType | string;
+  initial_balance: number;
+  current_balance: number;
+}
+
 export interface User {
   id: number | string;
   name: string;
@@ -196,6 +206,8 @@ export interface DashboardData {
       status: "open" | "closed" | "paid";
     }>;
   };
+  accounts_balance?: AccountBalance[];
+  total_accounts_balance?: number;
 }
 
 export interface ImportedTransaction {
