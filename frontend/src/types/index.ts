@@ -508,3 +508,35 @@ export interface AccountTransfer {
   created_at?: string;
   updated_at?: string;
 }
+
+
+export interface StatementImportItem {
+  id: string;
+  date: string;
+  description: string;
+  amount: number;
+  type: "income" | "expense";
+  category_id?: number | null;
+  category_name?: string | null;
+  is_duplicate?: boolean;
+  duplicate_reason?: string | null;
+}
+
+export interface StatementImportPreviewResponse {
+  account_id: string;
+  account_name: string;
+  bank_name?: string | null;
+  filename: string;
+  fileType: "ofx" | "csv";
+  totalCount: number;
+  duplicatesCount: number;
+  newCount: number;
+  transactions: StatementImportItem[];
+}
+
+export interface StatementImportConfirmResponse {
+  success: boolean;
+  imported_count: number;
+  duplicates_ignored: number;
+  message: string;
+}

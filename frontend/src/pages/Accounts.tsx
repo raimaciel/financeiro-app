@@ -1,4 +1,5 @@
 import React, { useState } from "react";
+import { Link } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import api from "@/lib/api";
 import type { BankAccount, AccountType, AccountTransfer } from "@/types";
@@ -47,6 +48,7 @@ import {
   CheckCircle2,
   ArrowRightLeft,
   AlertCircle,
+  Upload,
 } from "lucide-react";
 
 // ── Helpers e Mapas de Tipos ─────────────────────────────────────────────────
@@ -409,10 +411,18 @@ export default function Accounts() {
         </div>
 
         {!isViewer && (
-          <Button onClick={openCreateDialog} className="flex items-center gap-2 self-start sm:self-auto shadow-xs">
-            <Plus className="h-4 w-4" />
-            Nova Conta
-          </Button>
+          <div className="flex items-center gap-2 self-start sm:self-auto">
+            <Link to="/accounts/import">
+              <Button variant="outline" className="flex items-center gap-2 shadow-xs font-semibold">
+                <Upload className="h-4 w-4 text-primary" />
+                Importar Extrato
+              </Button>
+            </Link>
+            <Button onClick={openCreateDialog} className="flex items-center gap-2 shadow-xs font-semibold">
+              <Plus className="h-4 w-4" />
+              Nova Conta
+            </Button>
+          </div>
         )}
       </div>
 
@@ -668,7 +678,17 @@ export default function Accounts() {
                   </div>
 
                   {!isViewer && !isArchived && (
-                    <div className="mt-3 pt-2.5 border-t border-slate-100 flex items-center justify-end">
+                    <div className="mt-3 pt-2.5 border-t border-slate-100 flex items-center justify-end gap-1.5">
+                      <Link to={`/accounts/import?accountId=${acc.id}`}>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="text-xs h-7 gap-1.5 text-slate-600 hover:text-primary hover:bg-primary/10 font-semibold"
+                        >
+                          <Upload className="h-3.5 w-3.5" />
+                          Extrato
+                        </Button>
+                      </Link>
                       <Button
                         variant="ghost"
                         size="sm"

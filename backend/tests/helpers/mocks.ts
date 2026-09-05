@@ -139,6 +139,22 @@ export function createD1Mock(rows: Record<string, any[]> = {}) {
 							payment_account_id,
 						});
 					}
+					if (key === 'transactions') {
+						const [workspace_id, user_id, category_id, account_id, type, description, amount, date] = bindings;
+						const newId = rows[key].length + 1;
+						rows[key].push({
+							id: newId,
+							workspace_id,
+							user_id,
+							category_id,
+							account_id,
+							type,
+							description,
+							amount: Number(amount),
+							date,
+							created_at: new Date().toISOString(),
+						});
+					}
 				}
 				if (key && rows[key] && lowerSql.startsWith('update')) {
 					let targetId = bindings[bindings.length - 1];
@@ -249,6 +265,18 @@ export function createD1Mock(rows: Record<string, any[]> = {}) {
 									payment_account_color: inv.payment_account_color ?? acc?.color,
 								};
 							});
+						}
+						return { results: list, success: true };
+					}
+					if (key === 'transactions') {
+						let list = [...rows[key]];
+						if (lowerSql.includes('where workspace_id = ? and account_id = ?')) {
+							const wsId = bindings[0];
+							const accId = bindings[1];
+							list = list.filter((t: any) =>
+								(t.workspace_id === undefined || String(t.workspace_id) === String(wsId)) &&
+								(t.account_id === undefined || String(t.account_id) === String(accId))
+							);
 						}
 						return { results: list, success: true };
 					}

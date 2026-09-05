@@ -16,6 +16,7 @@ import Categories from "./pages/Categories";
 import CreditCards from "./pages/CreditCards";
 import Transactions from "./pages/Transactions";
 import ImportTransactions from "./pages/ImportTransactions";
+import ImportStatement from "./pages/ImportStatement";
 import RecurringTransactions from "./pages/RecurringTransactions";
 import BudgetsAndGoals from "./pages/BudgetsAndGoals";
 import AdminUsers from "./pages/AdminUsers";
@@ -46,6 +47,7 @@ export default function App() {
                 <Route path="/workspaces" element={<Workspaces />} />
                 <Route path="/categories" element={<Categories />} />
                 <Route path="/accounts" element={<Accounts />} />
+                <Route path="/accounts/import" element={<ImportStatement />} />
                 <Route path="/credit-cards" element={<CreditCards />} />
                 <Route path="/transactions" element={<Transactions />} />
                 <Route path="/import" element={<ImportTransactions />} />
