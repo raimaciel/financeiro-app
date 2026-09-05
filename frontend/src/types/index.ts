@@ -454,3 +454,19 @@ export interface InviteCode {
   is_exhausted?: boolean;
   status?: "ativo" | "expirado" | "esgotado";
 }
+
+
+export type AccountType = "checking" | "savings" | "investment" | "cash";
+
+export interface BankAccount {
+  id: string;
+  workspace_id: string;
+  name: string;
+  bank_name?: string | null;
+  account_type: AccountType;
+  initial_balance: number;
+  color?: string;
+  status: "active" | "archived";
+  created_at?: string;
+  updated_at?: string;
+}

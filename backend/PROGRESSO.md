@@ -986,13 +986,40 @@ Permitir que os administradores editem o nome completo, status de ativação da 
 ### Pendências
 - Nenhuma pendência.
 
+---
 
+## 25. [2026-09-05 14:55] - Fase 1: Cadastro de Bancos e Contas (bank_accounts)
 
+### O que foi feito
+1. **Banco de Dados (Cloudflare D1)**:
+   - Criada a migration `0011_bank_accounts.sql` com a tabela `bank_accounts` (UUID, workspace_id FK, name, bank_name, account_type [checking, savings, investment, cash], initial_balance, color, status [active, archived], created_at, updated_at).
+   - Criados índices para `workspace_id` e `status`.
+2. **Backend (`backend/src/routes/accounts.ts` e `backend/src/index.ts`)**:
+   - Criado router modular com `authMiddleware` e validação por workspace (`owner`, `editor`, rejeição a `viewer`).
+   - Endpoints: `GET /workspaces/:workspaceId/accounts`, `GET /workspaces/:workspaceId/accounts/:id`, `POST /workspaces/:workspaceId/accounts`, `PUT /workspaces/:workspaceId/accounts/:id`, `DELETE /workspaces/:workspaceId/accounts/:id`.
+   - Registrado `accountsRouter` em `backend/src/index.ts`.
+   - Criados 10 testes de integração em `backend/tests/accounts.test.ts`.
+3. **Frontend (`frontend/src/pages/Accounts.tsx`, `App.tsx`, `Layout.tsx`, `types/index.ts`)**:
+   - Adicionados tipos `AccountType` e `BankAccount`.
+   - Criada página completa `Accounts.tsx` com KPIs de resumo, filtros por tipo, alternância de arquivadas, cards estilizados com badge e menu de ações, modal de cadastro/edição com datalist de bancos e seletor de cores.
+   - Registrada rota `/accounts` e adicionado item "Contas" com ícone `Landmark` no menu principal.
+   - Criados testes unitários em `frontend/src/tests/Accounts.test.tsx`.
+4. **Validação**:
+   - **192 testes passando no Backend (100%) em 28 arquivos**.
+   - **61 testes passando no Frontend (100%) em 14 arquivos**.
+   - Build do Frontend concluído com sucesso.
 
+### Arquivos modificados
+- `backend/migrations/0011_bank_accounts.sql`: Migração D1 da tabela bank_accounts.
+- `backend/src/routes/accounts.ts`: Rotas de contas bancárias.
+- `backend/src/index.ts`: Registro do router.
+- `backend/tests/accounts.test.ts`: Testes do backend.
+- `frontend/src/types/index.ts`: Tipos TypeScript.
+- `frontend/src/pages/Accounts.tsx`: Página de contas e bancos.
+- `frontend/src/App.tsx`: Rota /accounts.
+- `frontend/src/components/Layout.tsx`: Item de menu "Contas".
+- `frontend/src/tests/Accounts.test.tsx`: Testes do frontend.
+- `backend/PROGRESSO.md` e `PROGRESSO.md`: Registro da implementação.
 
-
-
-
-
-
-
+### Pendências
+- Nenhuma pendência na Fase 1.

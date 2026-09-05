@@ -13,6 +13,7 @@ import recurringRouter from './routes/recurring';
 import budgetsRouter from './routes/budgets';
 import notificationsRouter from './routes/notifications';
 import adminRouter from './routes/admin';
+import accountsRouter from './routes/accounts';
 
 const app = new Hono<{ Bindings: Bindings; Variables: Variables }>();
 
@@ -223,6 +224,7 @@ app.route('/api', importRouter);
 app.route('/', recurringRouter);
 app.route('/', budgetsRouter);
 app.route('/', notificationsRouter);
+app.route('/', accountsRouter);
 app.route('/', adminRouter);
 
 // Handler global de erros (garante log detalhado no Cloudflare Workers / wrangler tail)

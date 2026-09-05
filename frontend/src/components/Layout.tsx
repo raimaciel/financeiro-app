@@ -17,6 +17,7 @@ import {
   FolderKanban,
   Tags,
   CreditCard,
+  Landmark,
   ArrowLeftRight,
   FileSpreadsheet,
   Repeat,
@@ -100,6 +101,18 @@ export const Layout: React.FC = () => {
               >
                 <Tags className="h-4 w-4" />
                 Categorias
+              </NavLink>
+
+              <NavLink
+                to="/accounts"
+                className={({ isActive }) =>
+                  `flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium transition-colors ${
+                    isActive ? "bg-slate-100 text-primary font-semibold" : "text-muted-foreground hover:bg-slate-50 hover:text-primary"
+                  }`
+                }
+              >
+                <Landmark className="h-4 w-4" />
+                Contas
               </NavLink>
 
               <NavLink

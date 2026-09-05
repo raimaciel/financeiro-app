@@ -11,6 +11,7 @@ import Login from "./pages/Login";
 import Register from "./pages/Register";
 import Dashboard from "./pages/Dashboard";
 import Workspaces from "./pages/Workspaces";
+import Accounts from "./pages/Accounts";
 import Categories from "./pages/Categories";
 import CreditCards from "./pages/CreditCards";
 import Transactions from "./pages/Transactions";
@@ -44,6 +45,7 @@ export default function App() {
                 <Route path="/dashboard" element={<Dashboard />} />
                 <Route path="/workspaces" element={<Workspaces />} />
                 <Route path="/categories" element={<Categories />} />
+                <Route path="/accounts" element={<Accounts />} />
                 <Route path="/credit-cards" element={<CreditCards />} />
                 <Route path="/transactions" element={<Transactions />} />
                 <Route path="/import" element={<ImportTransactions />} />
