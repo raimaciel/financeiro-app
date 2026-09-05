@@ -1,7 +1,7 @@
 import React, { useState, useRef, useMemo, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import api from "@/lib/api";
-import type { CreditCard, CardType, Invoice, InvoiceForecastResponse } from "@/types";
+import type { CreditCard, CardType, Invoice, InvoiceForecastResponse, BankAccount } from "@/types";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 import { BrandBadge, BRAND_ICONS } from "@/components/BrandIcons";
 import { CreditCardFilters, DEFAULT_FILTERS, type CardFilterState } from "@/components/CreditCardFilters";
@@ -195,14 +195,23 @@ const deleteCard = async ({
   return res.data;
 };
 
+const fetchAccounts = async (workspaceId: string): Promise<BankAccount[]> => {
+  const res = await api.get(`/workspaces/${workspaceId}/accounts`);
+  return res.data;
+};
+
 const payInvoice = async ({
   workspaceId,
   invoiceId,
+  paymentAccountId,
 }: {
   workspaceId: string;
   invoiceId: string;
+  paymentAccountId: string;
 }) => {
-  const res = await api.post(`/invoices/${invoiceId}/pay`);
+  const res = await api.post(`/invoices/${invoiceId}/pay`, {
+    payment_account_id: paymentAccountId,
+  });
   return res.data;
 };
 
@@ -485,6 +494,11 @@ function CardItem({
             currentInvoice.status === "paid" ? (
               <span className="text-green-600 font-semibold flex items-center gap-1">
                 <CheckCircle2 className="h-3.5 w-3.5" /> Paga
+                {currentInvoice.payment_account_name && (
+                  <span className="text-xs text-slate-500 font-normal ml-0.5 truncate max-w-[90px]" title={currentInvoice.payment_account_name}>
+                    ({currentInvoice.payment_account_name})
+                  </span>
+                )}
               </span>
             ) : currentInvoice.days_until_due < 0 ? (
               <span className="text-red-600 font-semibold">
@@ -573,6 +587,30 @@ export default function CreditCards() {
     queryFn: () => fetchCards(selectedWorkspaceId),
     enabled: !!selectedWorkspaceId,
   });
+
+  const { data: accounts = [] } = useQuery<BankAccount[]>({
+    queryKey: ["accounts", selectedWorkspaceId],
+    queryFn: () => fetchAccounts(selectedWorkspaceId),
+    enabled: !!selectedWorkspaceId,
+  });
+
+  const [payingInvoice, setPayingInvoice] = useState<Invoice | null>(null);
+  const [paymentAccountId, setPaymentAccountId] = useState<string>("");
+
+  const handleStartPayInvoice = (invoice: Invoice) => {
+    setPayingInvoice(invoice);
+    const activeAccounts = accounts.filter((a) => a.status === "active");
+    setPaymentAccountId(activeAccounts[0]?.id || "");
+  };
+
+  useEffect(() => {
+    if (payingInvoice && !paymentAccountId) {
+      const activeAccounts = accounts.filter((a) => a.status === "active");
+      if (activeAccounts.length > 0) {
+        setPaymentAccountId(activeAccounts[0].id);
+      }
+    }
+  }, [payingInvoice, accounts, paymentAccountId]);
 
   const { data: invoices = [], isLoading: loadingInvoices } = useQuery<Invoice[]>({
     queryKey: ["invoices", selectedWorkspaceId, invoicesCard?.id],
@@ -730,7 +768,9 @@ export default function CreditCards() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["invoices"] });
       queryClient.invalidateQueries({ queryKey: ["dashboard"] });
-      showToast("Fatura marcada como paga!", "success");
+      queryClient.invalidateQueries({ queryKey: ["accounts"] });
+      showToast("Fatura marcada como paga com sucesso!", "success");
+      setPayingInvoice(null);
     },
     onError: (err: any) => {
       showToast(err.response?.data?.error || "Erro ao pagar fatura.", "error");
@@ -1509,24 +1549,42 @@ export default function CreditCards() {
                         </div>
 
                         {/* Informações de Vencimento e Ação de Pagar */}
-                        <div className="flex items-center justify-between pt-1 text-xs">
-                          <div className="text-slate-600">
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pt-1 text-xs">
+                          <div className="text-slate-600 flex flex-wrap items-center gap-2">
                             <span>Vencimento: <strong>{formatDateBR(selectedInvoice.due_date)}</strong></span>
-                            {selectedInvoice.status !== "paid" && (
-                              <span className="ml-2 text-slate-400">
+                            {selectedInvoice.status !== "paid" ? (
+                              <span className="text-slate-400">
                                 ({selectedInvoice.days_until_due < 0 ? `venceu há ${Math.abs(selectedInvoice.days_until_due)}d` : `em ${selectedInvoice.days_until_due}d`})
                               </span>
+                            ) : (
+                              selectedInvoice.paid_at && (
+                                <span className="text-emerald-700 font-medium">
+                                  • Paga em {formatDateBR(selectedInvoice.paid_at.slice(0, 10))}
+                                </span>
+                              )
                             )}
                           </div>
 
-                          {selectedInvoice.status !== "paid" && canEdit && (
-                            <Button
-                              size="sm"
-                              onClick={() => payMutation.mutate({ workspaceId: selectedWorkspaceId, invoiceId: selectedInvoice.id })}
-                              className="h-7 px-3 text-xs bg-emerald-600 hover:bg-emerald-700 text-white font-bold gap-1"
-                            >
-                              <CheckCircle2 className="h-3.5 w-3.5" /> Marcar como Paga
-                            </Button>
+                          {selectedInvoice.status === "paid" ? (
+                            selectedInvoice.payment_account_name ? (
+                              <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-50 text-emerald-800 border border-emerald-200 text-xs font-medium">
+                                <span
+                                  className="h-2 w-2 rounded-full inline-block shrink-0"
+                                  style={{ backgroundColor: selectedInvoice.payment_account_color || "#10b981" }}
+                                />
+                                <span>Pago com: <strong>{selectedInvoice.payment_account_name}</strong></span>
+                              </div>
+                            ) : null
+                          ) : (
+                            canEdit && (
+                              <Button
+                                size="sm"
+                                onClick={() => handleStartPayInvoice(selectedInvoice)}
+                                className="h-7 px-3 text-xs bg-emerald-600 hover:bg-emerald-700 text-white font-bold gap-1"
+                              >
+                                <CheckCircle2 className="h-3.5 w-3.5" /> Marcar como Paga
+                              </Button>
+                            )
                           )}
                         </div>
                       </CardContent>
@@ -1607,6 +1665,104 @@ export default function CreditCards() {
               )}
             </div>
           )}
+        </DialogContent>
+      </Dialog>
+      {/* MODAL DE PAGAMENTO DA FATURA */}
+      <Dialog open={!!payingInvoice} onOpenChange={(open) => !open && setPayingInvoice(null)}>
+        <DialogContent className="sm:max-w-[425px]">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-slate-900">
+              <CheckCircle2 className="h-5 w-5 text-emerald-600" />
+              Pagar Fatura
+            </DialogTitle>
+            <DialogDescription>
+              Selecione a conta bancária da qual o valor total da fatura será debitado.
+            </DialogDescription>
+          </DialogHeader>
+
+          {payingInvoice && (
+            <div className="space-y-4 py-2">
+              <div className="rounded-lg bg-slate-50 p-3 border border-slate-200 space-y-1.5">
+                <div className="flex justify-between text-xs text-slate-500">
+                  <span>Fatura de referência:</span>
+                  <span className="font-bold text-slate-800">
+                    {formatMonthYear(payingInvoice.reference_month)} - {payingInvoice.card_name || invoicesCard?.name}
+                  </span>
+                </div>
+                <div className="flex justify-between items-baseline pt-1 border-t border-slate-200/60">
+                  <span className="text-xs text-slate-600 font-medium">Valor a debitar:</span>
+                  <span className="text-xl font-black text-emerald-600">
+                    {formatCurrency(payingInvoice.total_amount)}
+                  </span>
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="payment-account-select" className="text-xs font-semibold text-slate-700">
+                  Debitar da Conta Bancária <span className="text-red-500">*</span>
+                </Label>
+                <Select
+                  value={paymentAccountId}
+                  onValueChange={setPaymentAccountId}
+                >
+                  <SelectTrigger id="payment-account-select" className="w-full">
+                    <SelectValue placeholder="Selecione uma conta bancária..." />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {accounts
+                      .filter((acc) => acc.status === "active")
+                      .map((acc) => (
+                        <SelectItem key={acc.id} value={acc.id}>
+                          <div className="flex items-center gap-2">
+                            <span
+                              className="h-2.5 w-2.5 rounded-full inline-block flex-shrink-0"
+                              style={{ backgroundColor: acc.color || "#2563eb" }}
+                            />
+                            <span className="font-medium">{acc.name}</span>
+                            {acc.bank_name && (
+                              <span className="text-xs text-slate-400">({acc.bank_name})</span>
+                            )}
+                          </div>
+                        </SelectItem>
+                      ))}
+                  </SelectContent>
+                </Select>
+                {accounts.filter((acc) => acc.status === "active").length === 0 && (
+                  <p className="text-xs text-amber-600">
+                    Nenhuma conta bancária ativa cadastrada neste workspace.
+                  </p>
+                )}
+              </div>
+            </div>
+          )}
+
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button
+              variant="outline"
+              onClick={() => setPayingInvoice(null)}
+              disabled={payMutation.isPending}
+            >
+              Cancelar
+            </Button>
+            <Button
+              onClick={() => {
+                if (!payingInvoice || !paymentAccountId) {
+                  showToast("Selecione a conta bancária para pagamento.", "error");
+                  return;
+                }
+                payMutation.mutate({
+                  workspaceId: selectedWorkspaceId,
+                  invoiceId: payingInvoice.id,
+                  paymentAccountId,
+                });
+              }}
+              disabled={payMutation.isPending || !paymentAccountId}
+              className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold gap-1.5"
+            >
+              {payMutation.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
+              Confirmar Pagamento
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </div>

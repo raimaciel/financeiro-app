@@ -279,7 +279,8 @@ dashboardRouter.get('/workspaces/:workspaceId/dashboard', async (c) => {
 					COALESCE(SUM(CASE WHEN t.type = 'income' THEN t.amount ELSE 0 END), 0) as total_income,
 					COALESCE(SUM(CASE WHEN t.type = 'expense' THEN t.amount ELSE 0 END), 0) as total_expense,
 					COALESCE((SELECT SUM(amount) FROM account_transfers WHERE from_account_id = ba.id AND workspace_id = ba.workspace_id), 0) as total_transfers_out,
-					COALESCE((SELECT SUM(amount) FROM account_transfers WHERE to_account_id = ba.id AND workspace_id = ba.workspace_id), 0) as total_transfers_in
+					COALESCE((SELECT SUM(amount) FROM account_transfers WHERE to_account_id = ba.id AND workspace_id = ba.workspace_id), 0) as total_transfers_in,
+					COALESCE((SELECT SUM(total_amount) FROM invoices WHERE payment_account_id = ba.id AND status = 'paid' AND workspace_id = ba.workspace_id), 0) as total_invoices_paid
 				FROM bank_accounts ba
 				LEFT JOIN transactions t ON t.account_id = ba.id AND t.workspace_id = ba.workspace_id
 				WHERE ba.workspace_id = ? AND ba.status = 'active'
@@ -298,6 +299,7 @@ dashboardRouter.get('/workspaces/:workspaceId/dashboard', async (c) => {
 				total_expense: number;
 				total_transfers_out: number;
 				total_transfers_in: number;
+				total_invoices_paid: number;
 			}>();
 
 		const accountsRows = accountsResult.results || [];
@@ -307,7 +309,8 @@ dashboardRouter.get('/workspaces/:workspaceId/dashboard', async (c) => {
 			const expense = acc.total_expense || 0;
 			const transfersOut = acc.total_transfers_out || 0;
 			const transfersIn = acc.total_transfers_in || 0;
-			const currentBal = Number((initialBal + income - expense - transfersOut + transfersIn).toFixed(2));
+			const invoicesPaid = acc.total_invoices_paid || 0;
+			const currentBal = Number((initialBal + income - expense - transfersOut + transfersIn - invoicesPaid).toFixed(2));
 			return {
 				id: acc.id,
 				name: acc.name,

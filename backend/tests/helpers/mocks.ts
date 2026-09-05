@@ -57,9 +57,34 @@ export function createD1Mock(rows: Record<string, any[]> = {}) {
 							);
 							return found ?? null;
 						}
+						if (lowerSql.includes('where credit_card_id = ? and reference_month = ?') || lowerSql.includes('where i.credit_card_id = ? and i.reference_month = ?')) {
+							const cardIdToFind = bindings[0];
+							const refMonthToFind = bindings[1];
+							const found = rows[key].find((r: any) =>
+								(r.credit_card_id === undefined || String(r.credit_card_id) === String(cardIdToFind)) &&
+								(r.reference_month === undefined || String(r.reference_month) === String(refMonthToFind))
+							);
+							if (found && rows['bank_accounts'] && found.payment_account_id) {
+								const acc = rows['bank_accounts'].find((a: any) => a.id === found.payment_account_id);
+								return {
+									...found,
+									payment_account_name: found.payment_account_name ?? acc?.name,
+									payment_account_color: found.payment_account_color ?? acc?.color,
+								};
+							}
+							return found ?? null;
+						}
 						if (lowerSql.includes('where id =') || lowerSql.includes('where i.id =') || lowerSql.includes('where u.id =') || lowerSql.includes('where card.id =') || lowerSql.includes('where cc.id =') || lowerSql.includes('from account_transfers where id =')) {
 							const idToFind = bindings[0];
 							const found = rows[key].find((r: any) => r.id === undefined || String(r.id) === String(idToFind));
+							if (found && key === 'invoices' && rows['bank_accounts'] && found.payment_account_id) {
+								const acc = rows['bank_accounts'].find((a: any) => a.id === found.payment_account_id);
+								return {
+									...found,
+									payment_account_name: found.payment_account_name ?? acc?.name,
+									payment_account_color: found.payment_account_color ?? acc?.color,
+								};
+							}
 							return found ?? null;
 						}
 						if (lowerSql.includes('where email =')) {
@@ -97,6 +122,21 @@ export function createD1Mock(rows: Record<string, any[]> = {}) {
 							date,
 							created_at: new Date().toISOString(),
 							updated_at: new Date().toISOString(),
+						});
+					}
+					if (key === 'invoices') {
+						const [id, credit_card_id, workspace_id, reference_month, closing_date, due_date, total_amount, status, paid_at, payment_account_id] = bindings;
+						rows[key].push({
+							id,
+							credit_card_id,
+							workspace_id,
+							reference_month,
+							closing_date,
+							due_date,
+							total_amount: Number(total_amount),
+							status,
+							paid_at,
+							payment_account_id,
 						});
 					}
 				}
@@ -166,6 +206,17 @@ export function createD1Mock(rows: Record<string, any[]> = {}) {
 								};
 							});
 						}
+						if (rows['invoices']) {
+							list = list.map((a: any) => {
+								const invoicesPaid = rows['invoices']
+									.filter((inv: any) => inv.payment_account_id === a.id && inv.status === 'paid')
+									.reduce((acc: number, inv: any) => acc + Number(inv.total_amount || inv.amount || 0), 0);
+								return {
+									...a,
+									total_invoices_paid: a.total_invoices_paid ?? invoicesPaid,
+								};
+							});
+						}
 						return { results: list, success: true };
 					}
 					if (key === 'account_transfers') {
@@ -182,6 +233,20 @@ export function createD1Mock(rows: Record<string, any[]> = {}) {
 									to_account_name: t.to_account_name ?? toAcc?.name,
 									to_account_bank_name: t.to_account_bank_name ?? toAcc?.bank_name,
 									to_account_color: t.to_account_color ?? toAcc?.color,
+								};
+							});
+						}
+						return { results: list, success: true };
+					}
+					if (key === 'invoices') {
+						let list = [...rows[key]];
+						if (rows['bank_accounts']) {
+							list = list.map((inv: any) => {
+								const acc = rows['bank_accounts'].find((a: any) => a.id === inv.payment_account_id);
+								return {
+									...inv,
+									payment_account_name: inv.payment_account_name ?? acc?.name,
+									payment_account_color: inv.payment_account_color ?? acc?.color,
 								};
 							});
 						}

@@ -17,6 +17,20 @@ vi.mock("@/lib/api", () => ({
   },
 }));
 
+
+const mockAccounts = [
+  {
+    id: "acc-1",
+    workspace_id: "ws-1",
+    name: "Conta Corrente Nubank",
+    bank_name: "Nubank",
+    account_type: "checking",
+    initial_balance: 5000,
+    color: "#820ad1",
+    status: "active",
+  },
+];
+
 const mockWorkspaces = [
   { id: "ws-1", name: "Meu Workspace", role: "owner" },
 ];
@@ -119,6 +133,7 @@ describe("Página de Cartões de Crédito e Faturas", () => {
   beforeEach(() => {
     vi.mocked(api.get).mockImplementation((url: string) => {
       if (url === "/workspaces") return Promise.resolve({ data: mockWorkspaces }) as any;
+      if (url.includes("/accounts")) return Promise.resolve({ data: mockAccounts }) as any;
       if (url.includes("/credit-cards/") && url.includes("/forecast")) return Promise.resolve({ data: mockForecast }) as any;
       if (url.includes("/cards/") && url.includes("/invoices")) return Promise.resolve({ data: mockInvoices }) as any;
       if (url.includes("/credit-cards")) return Promise.resolve({ data: mockCards }) as any;
@@ -221,6 +236,49 @@ describe("Página de Cartões de Crédito e Faturas", () => {
       expect(api.post).toHaveBeenCalledWith(
         "/workspaces/ws-1/credit-cards",
         expect.objectContaining({ name: "Meu Novo Cartão" })
+      );
+    });
+  });
+
+  it("deve abrir o modal de fatura, selecionar conta bancária para pagar e confirmar o débito", async () => {
+    renderCreditCards();
+
+    await waitFor(() => {
+      expect(screen.getByRole("heading", { name: "Nubank Ultravioleta" })).toBeInTheDocument();
+    });
+
+    // Clica no cartão para abrir o modal de faturas
+    const cardTitle = screen.getByRole("heading", { name: "Nubank Ultravioleta" });
+    fireEvent.click(cardTitle);
+
+    // Verifica que o modal de faturas abriu com a fatura aberta
+    await waitFor(() => {
+      expect(screen.getByText("Fatura Aberta")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: /Marcar como Paga/i })).toBeInTheDocument();
+    });
+
+    // Clica em 'Marcar como Paga'
+    const payBtn = screen.getByRole("button", { name: /Marcar como Paga/i });
+    fireEvent.click(payBtn);
+
+    // Modal de confirmação de pagamento abre
+    await waitFor(() => {
+      expect(screen.getByRole("heading", { name: /Pagar Fatura/i })).toBeInTheDocument();
+      expect(screen.getByText(/Debitar da Conta Bancária/i)).toBeInTheDocument();
+      const confirmBtn = screen.getByRole("button", { name: /Confirmar Pagamento/i });
+      expect(confirmBtn).not.toBeDisabled();
+    });
+
+    // Confirma o pagamento
+    const confirmBtn = screen.getByRole("button", { name: /Confirmar Pagamento/i });
+    fireEvent.click(confirmBtn);
+
+    await waitFor(() => {
+      expect(api.post).toHaveBeenCalledWith(
+        expect.stringContaining("/pay"),
+        expect.objectContaining({
+          payment_account_id: "acc-1",
+        })
       );
     });
   });

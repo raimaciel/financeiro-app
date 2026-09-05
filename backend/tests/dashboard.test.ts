@@ -285,6 +285,65 @@ describe('GET /workspaces/:workspaceId/dashboard', () => {
 		// Total consolidado: 3500 + 2500 = 6000 (igual ao saldo inicial somado 5000 + 1000)
 		expect(data.total_accounts_balance).toBe(6000);
 	});
+
+	it('deve deduzir pagamentos de faturas vinculados a contas no saldo atual', async () => {
+		const mockAccounts = [
+			{
+				id: 'acc-pagadora',
+				workspace_id: WORKSPACE_ID,
+				name: 'Conta Corrente',
+				bank_name: 'Itaú',
+				color: '#EC7000',
+				account_type: 'checking',
+				initial_balance: 4000,
+				status: 'active',
+			},
+		];
+
+		const mockInvoices = [
+			{
+				id: 'inv-paga-dashboard',
+				workspace_id: WORKSPACE_ID,
+				credit_card_id: 'card-1',
+				reference_month: '2026-08',
+				status: 'paid',
+				total_amount: 850.5,
+				payment_account_id: 'acc-pagadora',
+			},
+			{
+				id: 'inv-aberta-dashboard',
+				workspace_id: WORKSPACE_ID,
+				credit_card_id: 'card-1',
+				reference_month: '2026-09',
+				status: 'open',
+				total_amount: 500,
+				payment_account_id: 'acc-pagadora',
+			},
+		];
+
+		const env = createEnvMock({
+			workspace_members: [memberRow],
+			credit_cards: [],
+			bank_accounts: mockAccounts,
+			account_transfers: [],
+			invoices: mockInvoices,
+			transactions: [],
+		});
+
+		const tk = await token();
+		const res = await app.fetch(
+			request(`/workspaces/${WORKSPACE_ID}/dashboard`, tk),
+			env
+		);
+
+		expect(res.status).toBe(200);
+		const data = await res.json() as any;
+
+		// 4000 - 850.50 = 3149.50 (ignora a fatura aberta)
+		const acc = data.accounts_balance.find((a: any) => a.id === 'acc-pagadora');
+		expect(acc.current_balance).toBe(3149.5);
+		expect(data.total_accounts_balance).toBe(3149.5);
+	});
 });
 
 

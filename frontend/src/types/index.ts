@@ -97,6 +97,9 @@ export interface Invoice {
   total_amount: number;
   status: "open" | "closed" | "paid";
   paid_at: string | null;
+  payment_account_id?: string | null;
+  payment_account_name?: string | null;
+  payment_account_color?: string | null;
   transactions_count: number;
   card_name?: string;
   card_brand?: string;

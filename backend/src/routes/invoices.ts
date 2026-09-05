@@ -326,7 +326,14 @@ const getCardInvoicesHandler = async (c: any) => {
 
 		// 3. Busca faturas registradas no banco (status pago, etc.)
 		const { results: dbInvoices } = await db
-			.prepare('SELECT id, reference_month, status, paid_at, total_amount FROM invoices WHERE credit_card_id = ?')
+			.prepare(`
+				SELECT 
+					i.id, i.reference_month, i.status, i.paid_at, i.total_amount, i.payment_account_id,
+					ba.name as payment_account_name, ba.color as payment_account_color
+				FROM invoices i
+				LEFT JOIN bank_accounts ba ON ba.id = i.payment_account_id
+				WHERE i.credit_card_id = ?
+			`)
 			.bind(cardId)
 			.all<any>();
 
@@ -398,6 +405,9 @@ const getCardInvoicesHandler = async (c: any) => {
 				total_amount: Number(totalAmount.toFixed(2)),
 				status,
 				paid_at: saved?.paid_at || null,
+				payment_account_id: saved?.payment_account_id || null,
+				payment_account_name: saved?.payment_account_name || null,
+				payment_account_color: saved?.payment_account_color || null,
 				transactions_count: txs.length,
 				card_name: card.name,
 				card_brand: card.brand,
@@ -430,6 +440,9 @@ const getInvoiceDetailHandler = async (c: any) => {
 		let referenceMonth: string | null = null;
 		let savedStatus: string | null = null;
 		let savedPaidAt: string | null = null;
+		let paymentAccountId: string | null = null;
+		let paymentAccountName: string | null = null;
+		let paymentAccountColor: string | null = null;
 
 		if (invoiceId.startsWith('inv_')) {
 			const parts = invoiceId.split('_');
@@ -437,9 +450,32 @@ const getInvoiceDetailHandler = async (c: any) => {
 				cardId = parts[1];
 				referenceMonth = parts[2];
 			}
+			const inv = await db
+				.prepare(`
+					SELECT i.id, i.status, i.paid_at, i.payment_account_id, ba.name as payment_account_name, ba.color as payment_account_color
+					FROM invoices i
+					LEFT JOIN bank_accounts ba ON ba.id = i.payment_account_id
+					WHERE i.credit_card_id = ? AND i.reference_month = ?
+				`)
+				.bind(cardId, referenceMonth)
+				.first<any>();
+
+			if (inv) {
+				savedStatus = inv.status;
+				savedPaidAt = inv.paid_at;
+				paymentAccountId = inv.payment_account_id;
+				paymentAccountName = inv.payment_account_name;
+				paymentAccountColor = inv.payment_account_color;
+			}
 		} else {
 			const inv = await db
-				.prepare('SELECT id, credit_card_id, reference_month, workspace_id, status, paid_at FROM invoices WHERE id = ?')
+				.prepare(`
+					SELECT i.id, i.credit_card_id, i.reference_month, i.workspace_id, i.status, i.paid_at, i.payment_account_id,
+					       ba.name as payment_account_name, ba.color as payment_account_color
+					FROM invoices i
+					LEFT JOIN bank_accounts ba ON ba.id = i.payment_account_id
+					WHERE i.id = ?
+				`)
 				.bind(invoiceId)
 				.first<any>();
 
@@ -448,6 +484,9 @@ const getInvoiceDetailHandler = async (c: any) => {
 				referenceMonth = inv.reference_month;
 				savedStatus = inv.status;
 				savedPaidAt = inv.paid_at;
+				paymentAccountId = inv.payment_account_id;
+				paymentAccountName = inv.payment_account_name;
+				paymentAccountColor = inv.payment_account_color;
 			}
 		}
 
@@ -506,6 +545,9 @@ const getInvoiceDetailHandler = async (c: any) => {
 			total_amount: Number(totalAmount.toFixed(2)),
 			status,
 			paid_at: savedPaidAt,
+			payment_account_id: paymentAccountId,
+			payment_account_name: paymentAccountName,
+			payment_account_color: paymentAccountColor,
 			card_name: card.name,
 			card_brand: card.brand,
 			card_color: card.color,
@@ -521,17 +563,24 @@ invoicesRouter.get('/invoices/:id', getInvoiceDetailHandler);
 invoicesRouter.get('/workspaces/:workspaceId/invoices/:id', getInvoiceDetailHandler);
 
 // ------------------------------------------------------------------------------------------------
-// 6. POST /invoices/:id/pay - Marcar fatura como paga
+// 6. POST /invoices/:id/pay - Marcar fatura como paga debitando de uma conta bancária
 // ------------------------------------------------------------------------------------------------
-invoicesRouter.post('/invoices/:id/pay', async (c) => {
+const payInvoiceHandler = async (c: any) => {
 	try {
 		const invoiceId = c.req.param('id');
 		const userId = String(c.get('userId'));
 		const db = c.env.financeiro_db || (c.env as any).DB;
 
-		let cardId: string | null = null;
+		const body = await c.req.json().catch(() => ({}));
+		const { payment_account_id } = body;
+
+		if (!payment_account_id) {
+			return c.json({ error: 'Conta bancária para pagamento é obrigatória' }, 400);
+		}
+
+		let cardId: string | null = c.req.param('cardId') || null;
 		let referenceMonth: string | null = null;
-		let workspaceId: string | null = null;
+		let workspaceId: string | null = c.req.param('workspaceId') || null;
 
 		if (invoiceId.startsWith('inv_')) {
 			const parts = invoiceId.split('_');
@@ -541,14 +590,16 @@ invoicesRouter.post('/invoices/:id/pay', async (c) => {
 			}
 		} else {
 			const inv = await db
-				.prepare('SELECT id, credit_card_id, reference_month, workspace_id FROM invoices WHERE id = ?')
+				.prepare('SELECT id, credit_card_id, reference_month, workspace_id, status FROM invoices WHERE id = ?')
 				.bind(invoiceId)
 				.first<any>();
 
 			if (inv) {
 				cardId = inv.credit_card_id;
 				referenceMonth = inv.reference_month;
-				workspaceId = inv.workspace_id;
+				if (!workspaceId) {
+					workspaceId = inv.workspace_id;
+				}
 			}
 		}
 
@@ -571,6 +622,26 @@ invoicesRouter.post('/invoices/:id/pay', async (c) => {
 			return c.json({ error: 'Acesso negado ou permissão insuficiente' }, 403);
 		}
 
+		// Validar que a conta bancária existe e pertence ao mesmo workspace
+		const account = await db
+			.prepare('SELECT id, name, status FROM bank_accounts WHERE id = ? AND workspace_id = ?')
+			.bind(payment_account_id, workspaceId)
+			.first<any>();
+
+		if (!account) {
+			return c.json({ error: 'Conta bancária informada não foi encontrada ou não pertence a este workspace' }, 400);
+		}
+
+		// Verificar se a fatura já está paga
+		const existing = await db
+			.prepare('SELECT id, status FROM invoices WHERE credit_card_id = ? AND reference_month = ?')
+			.bind(cardId, referenceMonth)
+			.first<any>();
+
+		if (existing?.status === 'paid') {
+			return c.json({ error: 'Esta fatura já foi paga' }, 400);
+		}
+
 		const closingDay = Number(card.closing_day);
 		const dueDay = Number(card.due_day);
 		const now = new Date();
@@ -585,32 +656,31 @@ invoicesRouter.post('/invoices/:id/pay', async (c) => {
 		const totalAmount = txs.reduce((acc, curr) => acc + Number(curr.amount || 0), 0);
 		const nowISO = new Date().toISOString();
 
-		const existing = await db
-			.prepare('SELECT id FROM invoices WHERE credit_card_id = ? AND reference_month = ?')
-			.bind(cardId, referenceMonth)
-			.first<any>();
-
 		if (existing) {
 			await db
-				.prepare('UPDATE invoices SET status = "paid", paid_at = ?, total_amount = ? WHERE id = ?')
-				.bind(nowISO, totalAmount, existing.id)
+				.prepare('UPDATE invoices SET status = "paid", paid_at = ?, total_amount = ?, payment_account_id = ? WHERE id = ?')
+				.bind(nowISO, totalAmount, payment_account_id, existing.id)
 				.run();
 		} else {
 			const id = crypto.randomUUID();
 			await db
 				.prepare(`
-					INSERT INTO invoices (id, credit_card_id, workspace_id, reference_month, closing_date, due_date, total_amount, status, paid_at)
-					VALUES (?, ?, ?, ?, ?, ?, ?, 'paid', ?)
+					INSERT INTO invoices (id, credit_card_id, workspace_id, reference_month, closing_date, due_date, total_amount, status, paid_at, payment_account_id)
+					VALUES (?, ?, ?, ?, ?, ?, ?, 'paid', ?, ?)
 				`)
-				.bind(id, cardId, workspaceId, referenceMonth, period.closing_date, period.due_date, totalAmount, nowISO)
+				.bind(id, cardId, workspaceId, referenceMonth, period.closing_date, period.due_date, totalAmount, nowISO, payment_account_id)
 				.run();
 		}
 
-		return c.json({ message: 'Fatura marcada como paga com sucesso!' });
+		return c.json({ message: 'Fatura marcada como paga com sucesso!', payment_account_id });
 	} catch (err: any) {
 		console.error('Erro ao pagar fatura:', err);
 		return c.json({ error: 'Erro ao processar pagamento da fatura' }, 500);
 	}
-});
+};
+
+invoicesRouter.post('/invoices/:id/pay', payInvoiceHandler);
+invoicesRouter.post('/workspaces/:workspaceId/invoices/:id/pay', payInvoiceHandler);
+invoicesRouter.post('/workspaces/:workspaceId/credit-cards/:cardId/invoices/:id/pay', payInvoiceHandler);
 
 export default invoicesRouter;
