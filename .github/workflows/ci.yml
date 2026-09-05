@@ -107,7 +107,7 @@ jobs:
 
       # Download do dist gerado no job de build do frontend
       - name: Download Frontend Build
-        uses: actions/download-artifact@v6
+        uses: actions/download-artifact@v7
         with:
           name: frontend-dist
           path: frontend/dist
