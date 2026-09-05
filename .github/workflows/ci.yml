@@ -112,6 +112,12 @@ jobs:
           name: frontend-dist
           path: frontend/dist
 
+      # Debug temporario CLOUDFLARE_ACCOUNT_ID
+      - name: Debug CLOUDFLARE_ACCOUNT_ID length
+        run: echo -n "$CLOUDFLARE_ACCOUNT_ID" | wc -c
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
       # Deploy do Frontend (Cloudflare Pages)
       - name: Deploy Frontend to Cloudflare Pages
         working-directory: frontend
