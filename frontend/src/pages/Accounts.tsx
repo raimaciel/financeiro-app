@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import api from "@/lib/api";
-import type { BankAccount, AccountType } from "@/types";
+import type { BankAccount, AccountType, AccountTransfer } from "@/types";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -45,6 +45,7 @@ import {
   Banknote,
   Building2,
   CheckCircle2,
+  ArrowRightLeft,
   AlertCircle,
 } from "lucide-react";
 
@@ -123,6 +124,21 @@ export default function Accounts() {
   const [dialogOpen, setDialogOpen] = useState<boolean>(false);
   const [editingAccount, setEditingAccount] = useState<BankAccount | null>(null);
 
+  // Estados de Transferência
+  const [transferDialogOpen, setTransferDialogOpen] = useState<boolean>(false);
+  const [transferFromAccountId, setTransferFromAccountId] = useState<string>("");
+  const [transferToAccountId, setTransferToAccountId] = useState<string>("");
+  const [transferAmount, setTransferAmount] = useState<string>("");
+  const [transferDescription, setTransferDescription] = useState<string>("");
+  const [transferDate, setTransferDate] = useState<string>(() => {
+    const now = new Date();
+    const yyyy = now.getFullYear();
+    const mm = String(now.getMonth() + 1).padStart(2, "0");
+    const dd = String(now.getDate()).padStart(2, "0");
+    return `${yyyy}-${mm}-${dd}`;
+  });
+  const [transferError, setTransferError] = useState<string | null>(null);
+
   // Formulário
   const [formName, setFormName] = useState<string>("");
   const [formBankName, setFormBankName] = useState<string>("");
@@ -188,6 +204,108 @@ export default function Accounts() {
       queryClient.invalidateQueries({ queryKey: ["accounts", activeWorkspaceId] });
     },
   });
+
+  // Query: Histórico de Transferências
+  const {
+    data: transfers = [],
+    isLoading: loadingTransfers,
+  } = useQuery<AccountTransfer[]>({
+    queryKey: ["transfers", activeWorkspaceId],
+    queryFn: async () => {
+      if (!activeWorkspaceId) return [];
+      const res = await api.get(`/workspaces/${activeWorkspaceId}/transfers`);
+      return res.data;
+    },
+    enabled: !!activeWorkspaceId,
+  });
+
+  // Mutação: Criar Transferência
+  const createTransferMutation = useMutation({
+    mutationFn: async (payload: {
+      from_account_id: string;
+      to_account_id: string;
+      amount: number;
+      description?: string | null;
+      date: string;
+    }) => {
+      const res = await api.post(`/workspaces/${activeWorkspaceId}/transfers`, payload);
+      return res.data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["transfers", activeWorkspaceId] });
+      queryClient.invalidateQueries({ queryKey: ["accounts", activeWorkspaceId] });
+      queryClient.invalidateQueries({ queryKey: ["dashboard", activeWorkspaceId] });
+      closeTransferDialog();
+    },
+    onError: (err: any) => {
+      setTransferError(err.response?.data?.error || "Erro ao realizar transferência.");
+    },
+  });
+
+  // Mutação: Deletar Transferência
+  const deleteTransferMutation = useMutation({
+    mutationFn: async (id: string) => {
+      const res = await api.delete(`/workspaces/${activeWorkspaceId}/transfers/${id}`);
+      return res.data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["transfers", activeWorkspaceId] });
+      queryClient.invalidateQueries({ queryKey: ["accounts", activeWorkspaceId] });
+      queryClient.invalidateQueries({ queryKey: ["dashboard", activeWorkspaceId] });
+    },
+  });
+
+  const openTransferDialog = (fromAccount?: BankAccount) => {
+    const activeAccs = accounts.filter((a) => a.status === "active");
+    const defaultFrom = fromAccount?.id || (activeAccs.length > 0 ? activeAccs[0].id : "");
+    const defaultTo = activeAccs.find((a) => a.id !== defaultFrom)?.id || "";
+
+    setTransferFromAccountId(defaultFrom);
+    setTransferToAccountId(defaultTo);
+    setTransferAmount("");
+    setTransferDescription("");
+    setTransferError(null);
+    setTransferDialogOpen(true);
+  };
+
+  const closeTransferDialog = () => {
+    setTransferDialogOpen(false);
+    setTransferError(null);
+  };
+
+  const handleTransferSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    setTransferError(null);
+
+    if (!transferFromAccountId || !transferToAccountId) {
+      setTransferError("Selecione as contas de origem e destino.");
+      return;
+    }
+
+    if (transferFromAccountId === transferToAccountId) {
+      setTransferError("A conta de destino deve ser diferente da conta de origem.");
+      return;
+    }
+
+    const parsedAmount = parseFloat(transferAmount.replace(",", "."));
+    if (isNaN(parsedAmount) || parsedAmount <= 0) {
+      setTransferError("Informe um valor válido maior que zero.");
+      return;
+    }
+
+    if (!transferDate) {
+      setTransferError("Informe a data da transferência.");
+      return;
+    }
+
+    createTransferMutation.mutate({
+      from_account_id: transferFromAccountId,
+      to_account_id: transferToAccountId,
+      amount: parsedAmount,
+      description: transferDescription.trim() || null,
+      date: transferDate,
+    });
+  };
 
   // Abertura do Dialog
   const openCreateDialog = () => {
@@ -548,12 +666,104 @@ export default function Accounts() {
                       </span>
                     </div>
                   </div>
+
+                  {!isViewer && !isArchived && (
+                    <div className="mt-3 pt-2.5 border-t border-slate-100 flex items-center justify-end">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => openTransferDialog(acc)}
+                        className="text-xs h-7 gap-1.5 text-primary hover:text-primary hover:bg-primary/10 font-semibold"
+                      >
+                        <ArrowRightLeft className="h-3.5 w-3.5" />
+                        Transferir
+                      </Button>
+                    </div>
+                  )}
                 </CardContent>
               </Card>
             );
           })}
         </div>
       )}
+
+      {/* ── Histórico de Transferências ───────────────────────────────────────── */}
+      <div className="mt-8 space-y-3 pt-6 border-t">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <ArrowRightLeft className="h-5 w-5 text-primary" />
+            <h3 className="text-base font-bold text-slate-900">Histórico de Transferências</h3>
+          </div>
+          <span className="text-xs text-muted-foreground font-medium">
+            {transfers.length} {transfers.length === 1 ? "transferência registrada" : "transferências registradas"}
+          </span>
+        </div>
+
+        {transfers.length === 0 ? (
+          <div className="rounded-xl border border-dashed bg-slate-50/50 p-6 text-center">
+            <p className="text-sm font-medium text-slate-600">Nenhuma transferência realizada</p>
+            <p className="text-xs text-muted-foreground mt-1">
+              Transfira valores entre suas contas para manter o fluxo financeiro organizado.
+            </p>
+          </div>
+        ) : (
+          <div className="bg-white rounded-xl border divide-y overflow-hidden shadow-xs">
+            {transfers.map((tr) => (
+              <div
+                key={tr.id}
+                className="p-3.5 sm:p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 hover:bg-slate-50/80 transition-colors"
+              >
+                <div className="flex items-start sm:items-center gap-3 min-w-0">
+                  <div className="h-8 w-8 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center shrink-0">
+                    <ArrowRightLeft className="h-4 w-4" />
+                  </div>
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="text-sm font-semibold text-slate-900">
+                        {tr.from_account_name || "Conta Origem"}
+                      </span>
+                      <span className="text-xs text-muted-foreground">➔</span>
+                      <span className="text-sm font-semibold text-slate-900">
+                        {tr.to_account_name || "Conta Destino"}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-2 text-xs text-muted-foreground mt-0.5">
+                      <span>{tr.date}</span>
+                      {tr.description && (
+                        <>
+                          <span>•</span>
+                          <span className="truncate">{tr.description}</span>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-between sm:justify-end gap-3 shrink-0">
+                  <span className="text-sm font-bold text-slate-900">
+                    {formatCurrency(tr.amount)}
+                  </span>
+                  {!isViewer && (
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-8 w-8 text-slate-400 hover:text-red-600 hover:bg-red-50"
+                      title="Excluir transferência"
+                      onClick={() => {
+                        if (confirm("Tem certeza que deseja excluir esta transferência?")) {
+                          deleteTransferMutation.mutate(tr.id);
+                        }
+                      }}
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
 
       {/* ── Modal de Criação / Edição ────────────────────────────────────────── */}
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
@@ -702,6 +912,149 @@ export default function Accounts() {
                   "Salvar Alterações"
                 ) : (
                   "Criar Conta"
+                )}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Modal de Transferência entre Contas ────────────────────────────── */}
+      <Dialog open={transferDialogOpen} onOpenChange={setTransferDialogOpen}>
+        <DialogContent className="sm:max-w-md">
+          <form onSubmit={handleTransferSubmit}>
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2">
+                <ArrowRightLeft className="h-5 w-5 text-primary" />
+                Transferir entre Contas
+              </DialogTitle>
+              <DialogDescription>
+                Transfira saldo entre suas contas bancárias do workspace.
+              </DialogDescription>
+            </DialogHeader>
+
+            {transferError && (
+              <div className="mt-3 flex items-center gap-2 rounded-lg bg-red-50 p-3 text-xs text-red-700 border border-red-200">
+                <AlertCircle className="h-4 w-4 shrink-0" />
+                <span>{transferError}</span>
+              </div>
+            )}
+
+            <div className="space-y-4 py-3">
+              {/* Conta de Origem */}
+              <div className="space-y-1.5">
+                <Label htmlFor="transfer-from">Conta de Origem (De) *</Label>
+                <Select
+                  value={transferFromAccountId}
+                  onValueChange={setTransferFromAccountId}
+                >
+                  <SelectTrigger id="transfer-from">
+                    <SelectValue placeholder="Selecione a conta de origem" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {accounts
+                      .filter((a) => a.status === "active")
+                      .map((acc) => (
+                        <SelectItem key={acc.id} value={acc.id}>
+                          <div className="flex items-center gap-2">
+                            <div
+                              className="h-2.5 w-2.5 rounded-full shrink-0"
+                              style={{ backgroundColor: acc.color || "#2563eb" }}
+                            />
+                            <span>{acc.name}</span>
+                            {acc.bank_name && (
+                              <span className="text-xs text-muted-foreground">({acc.bank_name})</span>
+                            )}
+                          </div>
+                        </SelectItem>
+                      ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              {/* Conta de Destino */}
+              <div className="space-y-1.5">
+                <Label htmlFor="transfer-to">Conta de Destino (Para) *</Label>
+                <Select
+                  value={transferToAccountId}
+                  onValueChange={setTransferToAccountId}
+                >
+                  <SelectTrigger id="transfer-to">
+                    <SelectValue placeholder="Selecione a conta de destino" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {accounts
+                      .filter((a) => a.status === "active" && a.id !== transferFromAccountId)
+                      .map((acc) => (
+                        <SelectItem key={acc.id} value={acc.id}>
+                          <div className="flex items-center gap-2">
+                            <div
+                              className="h-2.5 w-2.5 rounded-full shrink-0"
+                              style={{ backgroundColor: acc.color || "#2563eb" }}
+                            />
+                            <span>{acc.name}</span>
+                            {acc.bank_name && (
+                              <span className="text-xs text-muted-foreground">({acc.bank_name})</span>
+                            )}
+                          </div>
+                        </SelectItem>
+                      ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              {/* Valor e Data */}
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1.5">
+                  <Label htmlFor="transfer-amount">Valor (R$) *</Label>
+                  <Input
+                    id="transfer-amount"
+                    type="number"
+                    step="0.01"
+                    min="0.01"
+                    placeholder="0,00"
+                    value={transferAmount}
+                    onChange={(e) => setTransferAmount(e.target.value)}
+                    required
+                  />
+                </div>
+
+                <div className="space-y-1.5">
+                  <Label htmlFor="transfer-date">Data *</Label>
+                  <Input
+                    id="transfer-date"
+                    type="date"
+                    value={transferDate}
+                    onChange={(e) => setTransferDate(e.target.value)}
+                    required
+                  />
+                </div>
+              </div>
+
+              {/* Descrição */}
+              <div className="space-y-1.5">
+                <Label htmlFor="transfer-desc">Descrição (Opcional)</Label>
+                <Input
+                  id="transfer-desc"
+                  placeholder="Ex: Reserva de emergência, Aporte..."
+                  value={transferDescription}
+                  onChange={(e) => setTransferDescription(e.target.value)}
+                />
+              </div>
+            </div>
+
+            <DialogFooter className="gap-2 sm:gap-0">
+              <Button type="button" variant="outline" onClick={closeTransferDialog}>
+                Cancelar
+              </Button>
+              <Button type="submit" disabled={createTransferMutation.isPending}>
+                {createTransferMutation.isPending ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    Transferindo...
+                  </>
+                ) : (
+                  "Confirmar Transferência"
                 )}
               </Button>
             </DialogFooter>

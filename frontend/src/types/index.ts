@@ -487,3 +487,21 @@ export interface BankAccount {
   created_at?: string;
   updated_at?: string;
 }
+
+export interface AccountTransfer {
+  id: string;
+  workspace_id: string;
+  from_account_id: string;
+  to_account_id: string;
+  amount: number;
+  description?: string | null;
+  date: string;
+  from_account_name?: string | null;
+  from_account_bank_name?: string | null;
+  from_account_color?: string | null;
+  to_account_name?: string | null;
+  to_account_bank_name?: string | null;
+  to_account_color?: string | null;
+  created_at?: string;
+  updated_at?: string;
+}

@@ -277,7 +277,9 @@ dashboardRouter.get('/workspaces/:workspaceId/dashboard', async (c) => {
 					ba.account_type, 
 					ba.initial_balance,
 					COALESCE(SUM(CASE WHEN t.type = 'income' THEN t.amount ELSE 0 END), 0) as total_income,
-					COALESCE(SUM(CASE WHEN t.type = 'expense' THEN t.amount ELSE 0 END), 0) as total_expense
+					COALESCE(SUM(CASE WHEN t.type = 'expense' THEN t.amount ELSE 0 END), 0) as total_expense,
+					COALESCE((SELECT SUM(amount) FROM account_transfers WHERE from_account_id = ba.id AND workspace_id = ba.workspace_id), 0) as total_transfers_out,
+					COALESCE((SELECT SUM(amount) FROM account_transfers WHERE to_account_id = ba.id AND workspace_id = ba.workspace_id), 0) as total_transfers_in
 				FROM bank_accounts ba
 				LEFT JOIN transactions t ON t.account_id = ba.id AND t.workspace_id = ba.workspace_id
 				WHERE ba.workspace_id = ? AND ba.status = 'active'
@@ -294,12 +296,18 @@ dashboardRouter.get('/workspaces/:workspaceId/dashboard', async (c) => {
 				initial_balance: number;
 				total_income: number;
 				total_expense: number;
+				total_transfers_out: number;
+				total_transfers_in: number;
 			}>();
 
 		const accountsRows = accountsResult.results || [];
 		const accountsBalance = accountsRows.map((acc) => {
 			const initialBal = acc.initial_balance || 0;
-			const currentBal = Number((initialBal + (acc.total_income || 0) - (acc.total_expense || 0)).toFixed(2));
+			const income = acc.total_income || 0;
+			const expense = acc.total_expense || 0;
+			const transfersOut = acc.total_transfers_out || 0;
+			const transfersIn = acc.total_transfers_in || 0;
+			const currentBal = Number((initialBal + income - expense - transfersOut + transfersIn).toFixed(2));
 			return {
 				id: acc.id,
 				name: acc.name,

@@ -221,6 +221,70 @@ describe('GET /workspaces/:workspaceId/dashboard', () => {
 		// Total consolidado: 1300 + 2500 = 3800
 		expect(data.total_accounts_balance).toBe(3800);
 	});
+
+	it('deve refletir transferências entre contas no saldo de cada conta e no saldo total', async () => {
+		const mockAccounts = [
+			{
+				id: 'acc-origem',
+				workspace_id: WORKSPACE_ID,
+				name: 'Conta Inter',
+				bank_name: 'Banco Inter',
+				color: '#FF7A00',
+				account_type: 'checking',
+				initial_balance: 5000,
+				status: 'active',
+			},
+			{
+				id: 'acc-destino',
+				workspace_id: WORKSPACE_ID,
+				name: 'Poupança Nubank',
+				bank_name: 'Nubank',
+				color: '#820AD1',
+				account_type: 'savings',
+				initial_balance: 1000,
+				status: 'active',
+			},
+		];
+
+		const mockTransfers = [
+			{
+				id: 'tr-1',
+				workspace_id: WORKSPACE_ID,
+				from_account_id: 'acc-origem',
+				to_account_id: 'acc-destino',
+				amount: 1500,
+				date: '2026-09-05',
+			},
+		];
+
+		const env = createEnvMock({
+			workspace_members: [memberRow],
+			credit_cards: [],
+			bank_accounts: mockAccounts,
+			account_transfers: mockTransfers,
+			transactions: [],
+		});
+
+		const tk = await token();
+		const res = await app.fetch(
+			request(`/workspaces/${WORKSPACE_ID}/dashboard`, tk),
+			env
+		);
+
+		expect(res.status).toBe(200);
+		const data = await res.json() as any;
+
+		// Origem: 5000 - 1500 = 3500
+		const accOrigem = data.accounts_balance.find((a: any) => a.id === 'acc-origem');
+		expect(accOrigem.current_balance).toBe(3500);
+
+		// Destino: 1000 + 1500 = 2500
+		const accDestino = data.accounts_balance.find((a: any) => a.id === 'acc-destino');
+		expect(accDestino.current_balance).toBe(2500);
+
+		// Total consolidado: 3500 + 2500 = 6000 (igual ao saldo inicial somado 5000 + 1000)
+		expect(data.total_accounts_balance).toBe(6000);
+	});
 });
 
 

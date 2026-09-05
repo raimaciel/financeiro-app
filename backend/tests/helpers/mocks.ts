@@ -11,6 +11,9 @@ export function createD1Mock(rows: Record<string, any[]> = {}) {
 
 	const getTargetKey = (sql: string) => {
 		const lowerSql = sql.toLowerCase();
+		if (lowerSql.includes('from bank_accounts')) {
+			return 'bank_accounts';
+		}
 		const fromMatch = lowerSql.match(/(?:from|into|update)\s+([a-z0-9_]+)/);
 		if (fromMatch && fromMatch[1] && rows[fromMatch[1]]) {
 			return fromMatch[1];
@@ -45,7 +48,16 @@ export function createD1Mock(rows: Record<string, any[]> = {}) {
 							});
 							return found ?? null;
 						}
-						if (lowerSql.includes('where id =') || lowerSql.includes('where i.id =') || lowerSql.includes('where u.id =') || lowerSql.includes('where card.id =') || lowerSql.includes('where cc.id =')) {
+						if (lowerSql.includes('where id = ? and workspace_id = ?')) {
+							const idToFind = bindings[0];
+							const wsToFind = bindings[1];
+							const found = rows[key].find((r: any) =>
+								(r.id === undefined || String(r.id) === String(idToFind)) &&
+								(r.workspace_id === undefined || String(r.workspace_id) === String(wsToFind))
+							);
+							return found ?? null;
+						}
+						if (lowerSql.includes('where id =') || lowerSql.includes('where i.id =') || lowerSql.includes('where u.id =') || lowerSql.includes('where card.id =') || lowerSql.includes('where cc.id =') || lowerSql.includes('from account_transfers where id =')) {
 							const idToFind = bindings[0];
 							const found = rows[key].find((r: any) => r.id === undefined || String(r.id) === String(idToFind));
 							return found ?? null;
@@ -68,6 +80,26 @@ export function createD1Mock(rows: Record<string, any[]> = {}) {
 			run: vi.fn(async () => {
 				const key = getTargetKey(sql);
 				const lowerSql = sql.toLowerCase();
+				if (key && rows[key] && lowerSql.startsWith('delete')) {
+					let targetId = bindings[0];
+					rows[key] = rows[key].filter((r: any) => String(r.id) !== String(targetId));
+				}
+				if (key && rows[key] && lowerSql.startsWith('insert')) {
+					if (key === 'account_transfers') {
+						const [id, workspace_id, from_account_id, to_account_id, amount, description, date] = bindings;
+						rows[key].push({
+							id,
+							workspace_id,
+							from_account_id,
+							to_account_id,
+							amount: Number(amount),
+							description,
+							date,
+							created_at: new Date().toISOString(),
+							updated_at: new Date().toISOString(),
+						});
+					}
+				}
 				if (key && rows[key] && lowerSql.startsWith('update')) {
 					let targetId = bindings[bindings.length - 1];
 					if (lowerSql.includes('where id = ? and workspace_id = ?')) {
@@ -116,6 +148,40 @@ export function createD1Mock(rows: Record<string, any[]> = {}) {
 									...a,
 									total_income: a.total_income ?? inc,
 									total_expense: a.total_expense ?? exp,
+								};
+							});
+						}
+						if (rows['account_transfers']) {
+							list = list.map((a: any) => {
+								const out = rows['account_transfers']
+									.filter((t: any) => t.from_account_id === a.id)
+									.reduce((acc: number, t: any) => acc + Number(t.amount || 0), 0);
+								const incoming = rows['account_transfers']
+									.filter((t: any) => t.to_account_id === a.id)
+									.reduce((acc: number, t: any) => acc + Number(t.amount || 0), 0);
+								return {
+									...a,
+									total_transfers_out: a.total_transfers_out ?? out,
+									total_transfers_in: a.total_transfers_in ?? incoming,
+								};
+							});
+						}
+						return { results: list, success: true };
+					}
+					if (key === 'account_transfers') {
+						let list = [...rows[key]];
+						if (rows['bank_accounts']) {
+							list = list.map((t: any) => {
+								const fromAcc = rows['bank_accounts'].find((a: any) => a.id === t.from_account_id);
+								const toAcc = rows['bank_accounts'].find((a: any) => a.id === t.to_account_id);
+								return {
+									...t,
+									from_account_name: t.from_account_name ?? fromAcc?.name,
+									from_account_bank_name: t.from_account_bank_name ?? fromAcc?.bank_name,
+									from_account_color: t.from_account_color ?? fromAcc?.color,
+									to_account_name: t.to_account_name ?? toAcc?.name,
+									to_account_bank_name: t.to_account_bank_name ?? toAcc?.bank_name,
+									to_account_color: t.to_account_color ?? toAcc?.color,
 								};
 							});
 						}
