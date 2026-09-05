@@ -64,7 +64,7 @@ transactionsRouter.post('/workspaces/:workspaceId/transactions', async (c) => {
 		}
 
 		const body = await c.req.json();
-		const { category_id, credit_card_id, type, description, amount, installments, date, receipt_url } = body;
+		const { category_id, credit_card_id, account_id, type, description, amount, installments, date, receipt_url } = body;
 
 		if (!type || !['income', 'expense'].includes(type)) {
 			return c.json({ error: 'Tipo inválido. Deve ser "income" ou "expense"' }, 400);
@@ -82,6 +82,9 @@ transactionsRouter.post('/workspaces/:workspaceId/transactions', async (c) => {
 		const cleanDate = date.trim();
 		const categoryIdNum = category_id !== undefined && category_id !== null ? Number(category_id) : null;
 		const creditCardIdStr = credit_card_id && typeof credit_card_id === 'string' ? credit_card_id.trim() : null;
+		const accountIdStr = account_id && typeof account_id === 'string' && account_id.trim() !== '' && account_id.trim() !== 'none'
+			? account_id.trim()
+			: null;
 
 		// Verificar se category_id pertence ao mesmo workspace
 		if (categoryIdNum !== null) {
@@ -107,6 +110,18 @@ transactionsRouter.post('/workspaces/:workspaceId/transactions', async (c) => {
 			}
 		}
 
+		// Verificar se account_id pertence ao mesmo workspace
+		if (accountIdStr !== null) {
+			const account = await db
+				.prepare('SELECT id FROM bank_accounts WHERE id = ? AND workspace_id = ?')
+				.bind(accountIdStr, workspaceId)
+				.first();
+
+			if (!account) {
+				return c.json({ error: 'Conta bancária não encontrada ou não pertence a este workspace' }, 400);
+			}
+		}
+
 		const numInstallments = Math.max(1, Math.floor(Number(installments) || 1));
 		const installmentGroupId = numInstallments > 1 ? crypto.randomUUID() : null;
 		const installmentAmount = Number((amountNum / numInstallments).toFixed(2));
@@ -121,14 +136,15 @@ transactionsRouter.post('/workspaces/:workspaceId/transactions', async (c) => {
 			const result = await db
 				.prepare(`
 					INSERT INTO transactions 
-					(workspace_id, user_id, category_id, credit_card_id, type, description, amount, installments, installment_current, date, receipt_url, installment_group_id)
-					VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+					(workspace_id, user_id, category_id, credit_card_id, account_id, type, description, amount, installments, installment_current, date, receipt_url, installment_group_id)
+					VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 				`)
 				.bind(
 					workspaceId,
 					userId,
 					categoryIdNum,
 					creditCardIdStr,
+					accountIdStr,
 					type,
 					descStr,
 					installmentAmount,
@@ -148,6 +164,7 @@ transactionsRouter.post('/workspaces/:workspaceId/transactions', async (c) => {
 				user_id: userId,
 				category_id: categoryIdNum,
 				credit_card_id: creditCardIdStr,
+				account_id: accountIdStr,
 				type,
 				description: descStr,
 				amount: installmentAmount,
@@ -255,6 +272,7 @@ transactionsRouter.get('/workspaces/:workspaceId/transactions', async (c) => {
 		const typeFilter = c.req.query('type');
 		const categoryIdFilter = c.req.query('category_id');
 		const creditCardIdFilter = c.req.query('credit_card_id');
+		const accountIdFilter = c.req.query('account_id') || c.req.query('accountId');
 		const monthFilter = c.req.query('month');
 		const groupFilter = c.req.query('installment_group_id');
 
@@ -265,6 +283,8 @@ transactionsRouter.get('/workspaces/:workspaceId/transactions', async (c) => {
 				t.user_id as userId,
 				t.category_id as categoryId,
 				t.credit_card_id as creditCardId,
+				t.account_id as accountId,
+				t.account_id as account_id,
 				t.type,
 				t.description,
 				t.amount,
@@ -280,10 +300,14 @@ transactionsRouter.get('/workspaces/:workspaceId/transactions', async (c) => {
 				c.name as category_name,
 				c.icon as category_icon,
 				c.color as category_color,
-				cc.name as credit_card_name
+				cc.name as credit_card_name,
+				ba.name as account_name,
+				ba.color as account_color,
+				ba.bank_name as account_bank_name
 			FROM transactions t
 			LEFT JOIN categories c ON c.id = t.category_id
 			LEFT JOIN credit_cards cc ON cc.id = t.credit_card_id
+			LEFT JOIN bank_accounts ba ON ba.id = t.account_id
 			WHERE t.workspace_id = ?
 		`;
 
@@ -302,6 +326,11 @@ transactionsRouter.get('/workspaces/:workspaceId/transactions', async (c) => {
 		if (creditCardIdFilter) {
 			sql += ' AND t.credit_card_id = ?';
 			params.push(creditCardIdFilter);
+		}
+
+		if (accountIdFilter && accountIdFilter !== 'all') {
+			sql += ' AND t.account_id = ?';
+			params.push(accountIdFilter);
 		}
 
 		if (monthFilter && /^\d{4}-\d{2}$/.test(monthFilter)) {
@@ -357,6 +386,11 @@ transactionsRouter.put('/workspaces/:workspaceId/transactions/:id', async (c) =>
 		const date = body.date !== undefined ? String(body.date).trim() : existing.date;
 		const categoryId = body.category_id !== undefined ? (body.category_id ? Number(body.category_id) : null) : existing.category_id;
 		const creditCardId = body.credit_card_id !== undefined ? (body.credit_card_id ? String(body.credit_card_id).trim() : null) : existing.credit_card_id;
+		const accountId = body.account_id !== undefined
+			? (body.account_id && String(body.account_id).trim() !== '' && String(body.account_id).trim() !== 'none'
+				? String(body.account_id).trim()
+				: null)
+			: existing.account_id;
 		const type = body.type !== undefined && ['income', 'expense'].includes(body.type) ? body.type : existing.type;
 		const receiptUrl = body.receipt_url !== undefined ? (body.receipt_url ? String(body.receipt_url).trim() : null) : existing.receipt_url;
 
@@ -388,13 +422,25 @@ transactionsRouter.put('/workspaces/:workspaceId/transactions/:id', async (c) =>
 			}
 		}
 
+		// Validar conta bancária se fornecida
+		if (accountId !== null) {
+			const acc = await db
+				.prepare('SELECT id FROM bank_accounts WHERE id = ? AND workspace_id = ?')
+				.bind(accountId, workspaceId)
+				.first();
+
+			if (!acc) {
+				return c.json({ error: 'Conta bancária não encontrada ou não pertence a este workspace' }, 400);
+			}
+		}
+
 		await db
 			.prepare(`
 				UPDATE transactions
-				SET category_id = ?, credit_card_id = ?, type = ?, description = ?, amount = ?, date = ?, receipt_url = ?
+				SET category_id = ?, credit_card_id = ?, account_id = ?, type = ?, description = ?, amount = ?, date = ?, receipt_url = ?
 				WHERE id = ? AND workspace_id = ?
 			`)
-			.bind(categoryId, creditCardId, type, description, amount, date, receiptUrl, transactionId, workspaceId)
+			.bind(categoryId, creditCardId, accountId, type, description, amount, date, receiptUrl, transactionId, workspaceId)
 			.run();
 
 		return c.json({
@@ -403,6 +449,7 @@ transactionsRouter.put('/workspaces/:workspaceId/transactions/:id', async (c) =>
 			user_id: existing.user_id,
 			category_id: categoryId,
 			credit_card_id: creditCardId,
+			account_id: accountId,
 			type,
 			description,
 			amount,

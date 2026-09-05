@@ -246,4 +246,136 @@ describe('POST /workspaces/:workspaceId/transactions/:id/attachment', () => {
 	});
 });
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Vínculo com Contas Bancárias (Fase 2: account_id)
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('Transações vinculadas a Contas Bancárias (account_id)', () => {
+	const validAccountRow = {
+		id: 'acc-uuid-1',
+		workspace_id: WORKSPACE_ID,
+		name: 'Conta Inter',
+		bank_name: 'Banco Inter',
+		account_type: 'checking',
+		initial_balance: 1000,
+		status: 'active',
+	};
+
+	it('POST /workspaces/:id/transactions - deve criar receita vinculada a uma conta bancária', async () => {
+		const env = createEnvMock({
+			workspace_members: [memberRow],
+			bank_accounts: [validAccountRow],
+			transactions: [],
+		});
+		const tk = await token();
+		const req = makeRequest(`/workspaces/${WORKSPACE_ID}/transactions`, {
+			method: 'POST',
+			auth: tk,
+			body: {
+				type: 'income',
+				description: 'Salário Mensal',
+				amount: 5000,
+				date: '2026-09-05',
+				account_id: 'acc-uuid-1',
+			},
+		});
+
+		const res = await app.fetch(req, env);
+		expect(res.status).toBe(201);
+		const data: any = await res.json();
+		expect(data.type).toBe('income');
+		expect(data.amount).toBe(5000);
+		expect(data.account_id).toBe('acc-uuid-1');
+	});
+
+	it('POST /workspaces/:id/transactions - deve criar despesa vinculada a uma conta bancária', async () => {
+		const env = createEnvMock({
+			workspace_members: [memberRow],
+			bank_accounts: [validAccountRow],
+			transactions: [],
+		});
+		const tk = await token();
+		const req = makeRequest(`/workspaces/${WORKSPACE_ID}/transactions`, {
+			method: 'POST',
+			auth: tk,
+			body: {
+				type: 'expense',
+				description: 'PIX Aluguel',
+				amount: 1200,
+				date: '2026-09-05',
+				account_id: 'acc-uuid-1',
+			},
+		});
+
+		const res = await app.fetch(req, env);
+		expect(res.status).toBe(201);
+		const data: any = await res.json();
+		expect(data.type).toBe('expense');
+		expect(data.account_id).toBe('acc-uuid-1');
+	});
+
+	it('POST /workspaces/:id/transactions - deve rejeitar conta bancária de outro workspace ou inexistente', async () => {
+		const env = createEnvMock({
+			workspace_members: [memberRow],
+			bank_accounts: [], // conta não existe neste workspace
+			transactions: [],
+		});
+		const tk = await token();
+		const req = makeRequest(`/workspaces/${WORKSPACE_ID}/transactions`, {
+			method: 'POST',
+			auth: tk,
+			body: {
+				type: 'income',
+				description: 'Depósito',
+				amount: 300,
+				date: '2026-09-05',
+				account_id: 'acc-de-outro-workspace',
+			},
+		});
+
+		const res = await app.fetch(req, env);
+		expect(res.status).toBe(400);
+		const data: any = await res.json();
+		expect(data.error).toContain('Conta bancária não encontrada');
+	});
+
+	it('PUT /workspaces/:id/transactions/:id - deve atualizar conta bancária da transação', async () => {
+		const env = createEnvMock({
+			workspace_members: [memberRow],
+			bank_accounts: [validAccountRow],
+			transactions: [{ ...txRow, account_id: null }],
+		});
+		const tk = await token();
+		const req = makeRequest(`/workspaces/${WORKSPACE_ID}/transactions/1`, {
+			method: 'PUT',
+			auth: tk,
+			body: {
+				account_id: 'acc-uuid-1',
+			},
+		});
+
+		const res = await app.fetch(req, env);
+		expect(res.status).toBe(200);
+		const data: any = await res.json();
+		expect(data.account_id).toBe('acc-uuid-1');
+	});
+
+	it('GET /workspaces/:id/transactions - deve filtrar transações por account_id', async () => {
+		const env = createEnvMock({
+			workspace_members: [memberRow],
+			bank_accounts: [validAccountRow],
+			transactions: [{ ...txRow, account_id: 'acc-uuid-1' }],
+		});
+		const tk = await token();
+		const req = makeRequest(`/workspaces/${WORKSPACE_ID}/transactions?account_id=acc-uuid-1`, {
+			auth: tk,
+		});
+
+		const res = await app.fetch(req, env);
+		expect(res.status).toBe(200);
+		const data: any = await res.json();
+		expect(Array.isArray(data)).toBe(true);
+	});
+});
+
 

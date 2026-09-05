@@ -2,7 +2,7 @@ import React, { useState, useMemo, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import api from "@/lib/api";
-import type { Transaction, TransactionSummary, Category, CreditCard } from "@/types";
+import type { Transaction, TransactionSummary, Category, CreditCard, BankAccount } from "@/types";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -45,6 +45,7 @@ import {
   ChevronLeft,
   ChevronRight,
   CreditCard as CreditCardIcon,
+  Landmark,
   Banknote,
   Tag,
   Filter,
@@ -193,18 +194,27 @@ const fetchCards = async (workspaceId: string): Promise<CreditCard[]> => {
   return res.data;
 };
 
+const fetchAccounts = async (workspaceId: string): Promise<BankAccount[]> => {
+  const res = await api.get(`/workspaces/${workspaceId}/accounts`);
+  return res.data;
+};
+
 const fetchTransactions = async (
   workspaceId: string,
   month: string,
   type?: string,
   categoryId?: string,
-  cardId?: string
+  cardId?: string,
+  accountId?: string
 ): Promise<Transaction[]> => {
   const params = { month } as any;
   if (type && type !== "all") params.type = type;
   if (categoryId && categoryId !== "all") params.category_id = categoryId;
   if (cardId && cardId !== "all" && cardId !== "none") {
     params.credit_card_id = cardId;
+  }
+  if (accountId && accountId !== "all") {
+    params.account_id = accountId;
   }
 
   const res = await api.get(`/workspaces/${workspaceId}/transactions`, { params });
@@ -294,6 +304,7 @@ interface FormState {
   date: string;
   category_id: string;
   credit_card_id: string;
+  account_id: string;
   installments: string;
 }
 
@@ -304,6 +315,7 @@ const EMPTY_FORM: FormState = {
   date: getTodayString(),
   category_id: "",
   credit_card_id: "none",
+  account_id: "none",
   installments: "1",
 };
 
@@ -329,6 +341,7 @@ export default function Transactions() {
   const [filterType, setFilterType] = useState<string>("all");
   const [filterCategory, setFilterCategory] = useState<string>("all");
   const [filterCard, setFilterCard] = useState<string>("all");
+  const [filterAccount, setFilterAccount] = useState<string>("all");
 
   // Toast
   const [toast, setToast] = useState<ToastState | null>(null);
@@ -369,6 +382,12 @@ export default function Transactions() {
     enabled: !!selectedWorkspaceId,
   });
 
+  const { data: accounts = [] } = useQuery({
+    queryKey: ["accounts", selectedWorkspaceId],
+    queryFn: () => fetchAccounts(selectedWorkspaceId),
+    enabled: !!selectedWorkspaceId,
+  });
+
   const {
     data: transactions = [],
     isLoading: loadingTransactions,
@@ -381,6 +400,7 @@ export default function Transactions() {
       filterType,
       filterCategory,
       filterCard,
+      filterAccount,
     ],
     queryFn: () =>
       fetchTransactions(
@@ -388,7 +408,8 @@ export default function Transactions() {
         selectedMonth,
         filterType,
         filterCategory,
-        filterCard
+        filterCard,
+        filterAccount
       ),
     enabled: !!selectedWorkspaceId,
   });
@@ -522,6 +543,7 @@ export default function Transactions() {
       date: tx.date,
       category_id: tx.category_id ? String(tx.category_id) : "",
       credit_card_id: tx.credit_card_id || "none",
+      account_id: tx.account_id || tx.accountId || "none",
       installments: tx.installments ? String(tx.installments) : "1",
     });
     setSelectedFile(null);
@@ -607,6 +629,7 @@ export default function Transactions() {
       date: form.date,
       category_id: form.category_id ? Number(form.category_id) : null,
       credit_card_id: form.credit_card_id !== "none" ? form.credit_card_id : null,
+      account_id: form.account_id !== "none" ? form.account_id : null,
       installments: installmentsNum,
     };
 
@@ -831,7 +854,21 @@ export default function Transactions() {
             </SelectContent>
           </Select>
 
-          {(filterType !== "all" || filterCategory !== "all" || filterCard !== "all") && (
+          <Select value={filterAccount} onValueChange={setFilterAccount}>
+            <SelectTrigger className="w-44 h-8 text-xs bg-white">
+              <SelectValue placeholder="Conta / Banco" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">Todas as contas</SelectItem>
+              {accounts.map((acc) => (
+                <SelectItem key={acc.id} value={acc.id}>
+                  {acc.name}{acc.bank_name ? ` (${acc.bank_name})` : ""}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+
+          {(filterType !== "all" || filterCategory !== "all" || filterCard !== "all" || filterAccount !== "all") && (
             <Button
               variant="ghost"
               size="sm"
@@ -840,6 +877,7 @@ export default function Transactions() {
                 setFilterType("all");
                 setFilterCategory("all");
                 setFilterCard("all");
+                setFilterAccount("all");
               }}
             >
               <X className="h-3 w-3" /> Limpar filtros
@@ -942,6 +980,20 @@ export default function Transactions() {
                                   <span className="flex items-center gap-1 text-xs font-medium text-slate-600 bg-slate-100 px-2 py-0.5 rounded">
                                     <Banknote className="h-3 w-3" />
                                     Dinheiro/Pix
+                                  </span>
+                                )}
+
+                                {tx.account_name && (
+                                  <span
+                                    className="flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded border"
+                                    style={{
+                                      backgroundColor: tx.account_color ? `${tx.account_color}18` : "#F1F5F9",
+                                      borderColor: tx.account_color ? `${tx.account_color}35` : "#E2E8F0",
+                                      color: tx.account_color || "#334155",
+                                    }}
+                                  >
+                                    <Landmark className="h-3 w-3" />
+                                    {tx.account_name}
                                   </span>
                                 )}
 
@@ -1138,6 +1190,40 @@ export default function Transactions() {
                       </div>
                     </SelectItem>
                   ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            {/* Conta / Banco */}
+            <div className="space-y-2">
+              <Label htmlFor="tx-account">Conta / Banco (Opcional)</Label>
+              <Select
+                value={form.account_id}
+                onValueChange={(val) => setForm((f) => ({ ...f, account_id: val }))}
+              >
+                <SelectTrigger id="tx-account">
+                  <SelectValue placeholder="Selecione uma conta" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">
+                    <span className="text-muted-foreground">Nenhuma conta vinculada</span>
+                  </SelectItem>
+                  {accounts
+                    .filter((a) => a.status === "active" || a.id === form.account_id)
+                    .map((acc) => (
+                      <SelectItem key={acc.id} value={acc.id}>
+                        <div className="flex items-center gap-2">
+                          <div
+                            className="h-2.5 w-2.5 rounded-full shrink-0"
+                            style={{ backgroundColor: acc.color || "#3B82F6" }}
+                          />
+                          <span>{acc.name}</span>
+                          {acc.bank_name && (
+                            <span className="text-xs text-muted-foreground">({acc.bank_name})</span>
+                          )}
+                        </div>
+                      </SelectItem>
+                    ))}
                 </SelectContent>
               </Select>
             </div>

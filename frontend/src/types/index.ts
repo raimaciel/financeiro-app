@@ -116,6 +116,11 @@ export interface Transaction {
   category_icon?: string;
   category_color?: string;
   credit_card_name?: string;
+  account_id?: string | null;
+  accountId?: string | null;
+  account_name?: string | null;
+  account_color?: string | null;
+  account_bank_name?: string | null;
 }
 
 export interface TransactionSummary {
