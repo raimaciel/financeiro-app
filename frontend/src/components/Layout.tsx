@@ -19,6 +19,7 @@ import {
   CreditCard,
   Landmark,
   ArrowLeftRight,
+  BarChart3,
   FileSpreadsheet,
   Repeat,
   Target,
@@ -174,6 +175,18 @@ export const Layout: React.FC = () => {
                 <ArrowLeftRight className="h-4 w-4" />
                 Transações
               </NavLink>
+              <NavLink
+                to="/reports"
+                className={({ isActive }) =>
+                  `flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium transition-colors ${
+                    isActive ? "bg-slate-100 text-primary font-semibold" : "text-muted-foreground hover:bg-slate-50 hover:text-primary"
+                  }`
+                }
+              >
+                <BarChart3 className="h-4 w-4" />
+                Relatórios
+              </NavLink>
+
 
               {isAdmin && (
                 <NavLink

@@ -37,8 +37,45 @@ export function createD1Mock(rows: Record<string, any[]> = {}) {
 			first: vi.fn(async () => {
 				const key = getTargetKey(sql);
 				if (key && rows[key]) {
+					const lowerSql = sql.toLowerCase();
+					if (key === 'transactions' && lowerSql.includes('total_income') && (lowerSql.includes('sum(') || lowerSql.includes('count('))) {
+						let filtered = [...rows['transactions']];
+						if (lowerSql.includes('t.workspace_id = ?') && bindings.length > 0) {
+							const ws = bindings[0];
+							filtered = filtered.filter((t: any) => t.workspace_id === undefined || String(t.workspace_id) === String(ws));
+						}
+						// Check other filters
+						let idx = 1;
+						if (lowerSql.includes('t.date >= ?') && idx < bindings.length) {
+							const start = bindings[idx++];
+							filtered = filtered.filter((t: any) => t.date && t.date >= start);
+						}
+						if (lowerSql.includes('t.date <= ?') && idx < bindings.length) {
+							const end = bindings[idx++];
+							filtered = filtered.filter((t: any) => t.date && t.date <= end);
+						}
+						if (lowerSql.includes('t.account_id = ?') && idx < bindings.length) {
+							const acc = bindings[idx++];
+							filtered = filtered.filter((t: any) => String(t.account_id) === String(acc));
+						}
+						if (lowerSql.includes('t.category_id = ?') && idx < bindings.length) {
+							const cat = bindings[idx++];
+							filtered = filtered.filter((t: any) => Number(t.category_id) === Number(cat));
+						}
+						if (lowerSql.includes('t.type = ?') && idx < bindings.length) {
+							const typ = bindings[idx++];
+							filtered = filtered.filter((t: any) => t.type === typ);
+						}
+
+						const inc = filtered.filter((t: any) => t.type === 'income').reduce((s: number, t: any) => s + Number(t.amount || 0), 0);
+						const exp = filtered.filter((t: any) => t.type === 'expense').reduce((s: number, t: any) => s + Number(t.amount || 0), 0);
+						return {
+							total_income: inc,
+							total_expense: exp,
+							count: filtered.length,
+						};
+					}
 					if (bindings.length > 0) {
-						const lowerSql = sql.toLowerCase();
 						if (lowerSql.includes('where workspace_id =') && lowerSql.includes('user_id =')) {
 							const found = rows[key].find((r: any) => {
 								if (r.user_id !== undefined) {
@@ -277,8 +314,98 @@ export function createD1Mock(rows: Record<string, any[]> = {}) {
 								(t.workspace_id === undefined || String(t.workspace_id) === String(wsId)) &&
 								(t.account_id === undefined || String(t.account_id) === String(accId))
 							);
+							return { results: list, success: true };
 						}
-						return { results: list, success: true };
+
+						// Handle reports filtering
+						let filtered = [...list];
+						if (lowerSql.includes('t.workspace_id = ?') && bindings.length > 0) {
+							const ws = bindings[0];
+							filtered = filtered.filter((t: any) => t.workspace_id === undefined || String(t.workspace_id) === String(ws));
+						}
+						let pIdx = 1;
+						if (lowerSql.includes('t.date >= ?') && pIdx < bindings.length) {
+							const start = bindings[pIdx++];
+							filtered = filtered.filter((t: any) => t.date && t.date >= start);
+						}
+						if (lowerSql.includes('t.date <= ?') && pIdx < bindings.length) {
+							const end = bindings[pIdx++];
+							filtered = filtered.filter((t: any) => t.date && t.date <= end);
+						}
+						if (lowerSql.includes('t.account_id = ?') && pIdx < bindings.length) {
+							const acc = bindings[pIdx++];
+							filtered = filtered.filter((t: any) => String(t.account_id) === String(acc));
+						}
+						if (lowerSql.includes('t.category_id = ?') && pIdx < bindings.length) {
+							const cat = bindings[pIdx++];
+							filtered = filtered.filter((t: any) => Number(t.category_id) === Number(cat));
+						}
+						if (lowerSql.includes('t.type = ?') && pIdx < bindings.length) {
+							const typ = bindings[pIdx++];
+							filtered = filtered.filter((t: any) => t.type === typ);
+						}
+
+						if (lowerSql.includes('group by t.category_id')) {
+							const groupMap = new Map<string, any>();
+							for (const t of filtered) {
+								const cat = rows['categories']?.find((c: any) => c.id === t.category_id);
+								const k = `${t.category_id}_${t.type}`;
+								if (!groupMap.has(k)) {
+									groupMap.set(k, {
+										category_id: t.category_id,
+										name: cat?.name ?? 'Sem Categoria',
+										color: cat?.color ?? '#64748b',
+										icon: cat?.icon ?? 'Tag',
+										type: t.type,
+										total: 0,
+									});
+								}
+								groupMap.get(k).total += Number(t.amount || 0);
+							}
+							const res = Array.from(groupMap.values()).sort((a, b) => b.total - a.total);
+							return { results: res, success: true };
+						}
+
+						if (lowerSql.includes('group by t.account_id')) {
+							const groupMap = new Map<string, any>();
+							for (const t of filtered) {
+								const acc = rows['bank_accounts']?.find((b: any) => b.id === t.account_id);
+								const k = String(t.account_id);
+								if (!groupMap.has(k)) {
+									groupMap.set(k, {
+										account_id: t.account_id,
+										name: acc?.name ?? 'Sem Conta',
+										bank_name: acc?.bank_name ?? 'Outro',
+										color: acc?.color ?? '#0284c7',
+										total_income: 0,
+										total_expense: 0,
+									});
+								}
+								if (t.type === 'income') {
+									groupMap.get(k).total_income += Number(t.amount || 0);
+								} else {
+									groupMap.get(k).total_expense += Number(t.amount || 0);
+								}
+							}
+							const res = Array.from(groupMap.values());
+							return { results: res, success: true };
+						}
+
+						// Detailed transactions query
+						const detailed = filtered.map((t: any) => {
+							const cat = rows['categories']?.find((c: any) => c.id === t.category_id);
+							const acc = rows['bank_accounts']?.find((b: any) => b.id === t.account_id);
+							return {
+								...t,
+								category_name: t.category_name ?? cat?.name ?? 'Sem Categoria',
+								category_color: t.category_color ?? cat?.color ?? '#64748b',
+								category_icon: t.category_icon ?? cat?.icon ?? 'Tag',
+								account_name: t.account_name ?? acc?.name ?? 'Sem Conta',
+								account_bank_name: t.account_bank_name ?? acc?.bank_name ?? 'Outro',
+								account_color: t.account_color ?? acc?.color ?? '#0284c7',
+							};
+						});
+						return { results: detailed, success: true };
 					}
 					return { results: rows[key] ?? [], success: true };
 				}

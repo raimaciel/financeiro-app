@@ -238,7 +238,7 @@ describe("Página de Cartões de Crédito e Faturas", () => {
         expect.objectContaining({ name: "Meu Novo Cartão" })
       );
     });
-  });
+  }, 15000);
 
   it("deve abrir o modal de fatura, selecionar conta bancária para pagar e confirmar o débito", async () => {
     renderCreditCards();

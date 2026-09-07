@@ -20,6 +20,7 @@ import ImportStatement from "./pages/ImportStatement";
 import RecurringTransactions from "./pages/RecurringTransactions";
 import BudgetsAndGoals from "./pages/BudgetsAndGoals";
 import AdminUsers from "./pages/AdminUsers";
+import Reports from "./pages/Reports";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -53,6 +54,7 @@ export default function App() {
                 <Route path="/import" element={<ImportTransactions />} />
                 <Route path="/recurring" element={<RecurringTransactions />} />
                 <Route path="/budgets" element={<BudgetsAndGoals />} />
+                <Route path="/reports" element={<Reports />} />
                 <Route path="/admin/usuarios" element={<AdminUsers />} />
               </Route>
             </Route>

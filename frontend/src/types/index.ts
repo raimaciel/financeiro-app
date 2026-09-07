@@ -540,3 +540,66 @@ export interface StatementImportConfirmResponse {
   duplicates_ignored: number;
   message: string;
 }
+
+export interface ReportCategorySummary {
+  category_id: number | null;
+  name: string;
+  color: string;
+  icon: string;
+  type: "income" | "expense";
+  total: number;
+  percentage: number;
+}
+
+export interface ReportAccountSummary {
+  account_id: string | null;
+  name: string;
+  bank_name: string;
+  color: string;
+  total_income: number;
+  total_expense: number;
+  net_total: number;
+}
+
+export interface ReportTransactionItem {
+  id: number;
+  workspace_id: string;
+  user_id: number | string;
+  category_id?: number | null;
+  account_id?: string | null;
+  credit_card_id?: string | null;
+  type: "income" | "expense";
+  description: string;
+  amount: number;
+  date: string;
+  installments?: number;
+  installment_current?: number;
+  category_name?: string;
+  category_color?: string;
+  category_icon?: string;
+  account_name?: string;
+  account_bank_name?: string;
+  account_color?: string;
+  credit_card_name?: string | null;
+}
+
+export interface ReportSummaryResponse {
+  period: {
+    start: string | null;
+    end: string | null;
+  };
+  filters: {
+    account_id: string | null;
+    category_id: number | null;
+    type: string | null;
+  };
+  totals: {
+    income: number;
+    expense: number;
+    balance: number;
+    count: number;
+  };
+  by_category: ReportCategorySummary[];
+  by_account: ReportAccountSummary[];
+  transactions: ReportTransactionItem[];
+}
