@@ -1,9 +1,8 @@
-import React, { useState, useEffect, useRef } from "react";
+﻿import React, { useState, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import api from "@/lib/api";
 import type { NotificationItem, NotificationsResponse } from "@/types";
-import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import {
   Bell,
@@ -18,6 +17,9 @@ import {
   ExternalLink,
   Target,
   Sparkles,
+  Wallet,
+  ArrowLeftRight,
+  Trash2,
 } from "lucide-react";
 
 interface NotificationsPopoverProps {
@@ -26,10 +28,11 @@ interface NotificationsPopoverProps {
 
 export function NotificationsPopover({ workspaceId }: NotificationsPopoverProps) {
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const [isOpen, setIsOpen] = useState(false);
   const popoverRef = useRef<HTMLDivElement>(null);
 
-  // Armazenamento de IDs de notificações lidas no localStorage
+  // Armazenamento de IDs de notificações lidas localmente como fallback
   const storageKey = `financeiro_read_notifications_${workspaceId}`;
   const [readIds, setReadIds] = useState<string[]>(() => {
     try {
@@ -40,21 +43,28 @@ export function NotificationsPopover({ workspaceId }: NotificationsPopoverProps)
     }
   });
 
-  // Atualiza localStorage ao alterar readIds
-  const markAsRead = (id: string) => {
+  // Atualiza localStorage e backend ao marcar como lida
+  const markAsRead = async (id: string) => {
     setReadIds((prev) => {
       if (prev.includes(id)) return prev;
       const updated = [...prev, id];
       try {
         localStorage.setItem(storageKey, JSON.stringify(updated));
       } catch (err) {
-        console.error("Erro ao salvar notificação lida:", err);
+        console.error("Erro ao salvar notificação lida localmente:", err);
       }
       return updated;
     });
+
+    try {
+      await api.patch(`/workspaces/${workspaceId}/notifications/${id}/read`);
+      queryClient.invalidateQueries({ queryKey: ["notifications", workspaceId] });
+    } catch {
+      // Falha silenciosa no backend, mantendo local
+    }
   };
 
-  const markAllAsRead = (items: NotificationItem[]) => {
+  const markAllAsRead = async (items: NotificationItem[]) => {
     const allIds = items.map((n) => n.id);
     setReadIds(allIds);
     try {
@@ -62,9 +72,26 @@ export function NotificationsPopover({ workspaceId }: NotificationsPopoverProps)
     } catch (err) {
       console.error("Erro ao marcar todas como lidas:", err);
     }
+
+    try {
+      await api.patch(`/workspaces/${workspaceId}/notifications/read-all`);
+      queryClient.invalidateQueries({ queryKey: ["notifications", workspaceId] });
+    } catch {
+      // Falha silenciosa no backend
+    }
   };
 
-  // Buscar notificações com polling a cada 5 minutos
+  const deleteNotification = async (id: string) => {
+    try {
+      await api.delete(`/workspaces/${workspaceId}/notifications/${id}`);
+      queryClient.invalidateQueries({ queryKey: ["notifications", workspaceId] });
+    } catch {
+      // Se falhar no backend, apenas marca localmente como lida para não incomodar
+      markAsRead(id);
+    }
+  };
+
+  // Buscar notificações com polling a cada 60 segundos
   const { data, isLoading } = useQuery<NotificationsResponse>({
     queryKey: ["notifications", workspaceId],
     queryFn: async () => {
@@ -72,12 +99,15 @@ export function NotificationsPopover({ workspaceId }: NotificationsPopoverProps)
       return res.data;
     },
     enabled: !!workspaceId,
-    refetchInterval: 5 * 60 * 1000,
+    refetchInterval: 60 * 1000,
     refetchOnWindowFocus: true,
   });
 
-  const notifications = data?.notifications || [];
-  const unreadCount = notifications.filter((n) => !readIds.includes(n.id)).length;
+  const notifications = data?.notifications || data?.items || [];
+  const unreadCount =
+    data?.unread_count !== undefined
+      ? data.unread_count
+      : notifications.filter((n) => !readIds.includes(n.id) && !n.is_read).length;
 
   // Fechar dropdown ao clicar fora
   useEffect(() => {
@@ -104,16 +134,22 @@ export function NotificationsPopover({ workspaceId }: NotificationsPopoverProps)
 
   const renderIcon = (item: NotificationItem) => {
     switch (item.type) {
+      case "invoice_overdue":
       case "budget_exceeded":
         return <AlertCircle className="h-4 w-4 text-rose-600 shrink-0" />;
+      case "invoice_due":
+      case "invoice_due_soon":
+        return <CreditCard className="h-4 w-4 text-amber-600 shrink-0" />;
+      case "low_balance":
+        return <Wallet className="h-4 w-4 text-amber-600 shrink-0" />;
       case "budget_warning":
         return <AlertTriangle className="h-4 w-4 text-amber-600 shrink-0" />;
-      case "invoice_due_soon":
-        return <CreditCard className="h-4 w-4 text-indigo-600 shrink-0" />;
       case "goal_achieved":
         return <CheckCircle2 className="h-4 w-4 text-emerald-600 shrink-0" />;
       case "goal_deadline_near":
         return <Target className="h-4 w-4 text-amber-600 shrink-0" />;
+      case "transfer_completed":
+        return <ArrowLeftRight className="h-4 w-4 text-blue-600 shrink-0" />;
       case "recurring_pending":
         return <Repeat className="h-4 w-4 text-blue-600 shrink-0" />;
       case "import_reminder":
@@ -183,13 +219,17 @@ export function NotificationsPopover({ workspaceId }: NotificationsPopoverProps)
               </div>
             ) : (
               notifications.map((item) => {
-                const isUnread = !readIds.includes(item.id);
+                const isUnread =
+                  item.is_read !== undefined
+                    ? !item.is_read && !readIds.includes(item.id)
+                    : !readIds.includes(item.id);
+
                 return (
                   <div
                     key={item.id}
                     onClick={() => handleItemClick(item)}
-                    className={`p-3.5 flex items-start gap-3 cursor-pointer transition-colors hover:bg-slate-50 relative ${
-                      isUnread ? "bg-slate-50/50" : "bg-white"
+                    className={`p-3.5 flex items-start gap-3 cursor-pointer transition-colors hover:bg-slate-50 relative group ${
+                      isUnread ? "bg-slate-50/70" : "bg-white"
                     }`}
                   >
                     {/* Indicador de Não Lida */}
@@ -197,7 +237,7 @@ export function NotificationsPopover({ workspaceId }: NotificationsPopoverProps)
                       <span className="absolute left-1.5 top-5 h-2 w-2 rounded-full bg-primary" />
                     )}
 
-                    <div className="mt-0.5 p-1.5 rounded-lg bg-white border border-slate-200 shadow-2xs">
+                    <div className="mt-0.5 p-1.5 rounded-lg bg-white border border-slate-200 shadow-2xs shrink-0">
                       {renderIcon(item)}
                     </div>
 
@@ -210,7 +250,21 @@ export function NotificationsPopover({ workspaceId }: NotificationsPopoverProps)
                         >
                           {item.title}
                         </h4>
-                        <ExternalLink className="h-3 w-3 text-slate-400 opacity-60 shrink-0" />
+                        <div className="flex items-center gap-1">
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              deleteNotification(item.id);
+                            }}
+                            className="opacity-0 group-hover:opacity-100 p-0.5 text-slate-400 hover:text-rose-600 rounded transition-opacity"
+                            title="Dispensar notificação"
+                            aria-label="Dispensar notificação"
+                          >
+                            <Trash2 className="h-3 w-3" />
+                          </button>
+                          <ExternalLink className="h-3 w-3 text-slate-400 opacity-60 shrink-0" />
+                        </div>
                       </div>
                       <p className="text-[11px] text-slate-500 mt-0.5 leading-relaxed">
                         {item.message}

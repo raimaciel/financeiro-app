@@ -421,6 +421,10 @@ export interface InvoiceForecastResponse {
 }
 
 export type NotificationType =
+  | "invoice_due"
+  | "invoice_overdue"
+  | "low_balance"
+  | "transfer_completed"
   | "budget_warning"
   | "budget_exceeded"
   | "invoice_due_soon"
@@ -433,18 +437,27 @@ export type NotificationSeverity = "danger" | "warning" | "info";
 
 export interface NotificationItem {
   id: string;
-  type: NotificationType;
+  workspace_id?: string;
+  user_id?: string;
+  type: NotificationType | string;
   title: string;
   message: string;
-  severity: NotificationSeverity;
-  related_link: string;
-  created_context_date: string;
+  related_entity_type?: string | null;
+  related_entity_id?: string | null;
+  severity?: NotificationSeverity;
+  related_link?: string;
+  is_read?: boolean | number;
+  created_at?: string;
+  created_context_date?: string;
 }
 
 export interface NotificationsResponse {
   workspace_id: string;
   total_count: number;
+  total?: number;
+  unread_count?: number;
   notifications: NotificationItem[];
+  items?: NotificationItem[];
 }
 
 

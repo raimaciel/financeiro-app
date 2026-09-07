@@ -5,12 +5,18 @@ import { vi } from 'vitest';
  * Simula prepare().bind().first() / run() / all() com dados configuráveis.
  */
 export function createD1Mock(rows: Record<string, any[]> = {}) {
+	if (!rows['notifications']) {
+		rows['notifications'] = [];
+	}
 	const defaultRow = rows['default']?.[0] ?? null;
 	// Ordena chaves pela mais longa primeiro para evitar que "transactions" intercepte "recurring_transactions"
 	const sortedKeys = Object.keys(rows).sort((a, b) => b.length - a.length);
 
 	const getTargetKey = (sql: string) => {
 		const lowerSql = sql.toLowerCase();
+		if (lowerSql.includes('notifications')) {
+			return 'notifications';
+		}
 		if (lowerSql.includes('from bank_accounts')) {
 			return 'bank_accounts';
 		}
@@ -38,6 +44,46 @@ export function createD1Mock(rows: Record<string, any[]> = {}) {
 				const key = getTargetKey(sql);
 				if (key && rows[key]) {
 					const lowerSql = sql.toLowerCase();
+					if (key === 'notifications') {
+						if (lowerSql.includes('count(*) as unread_count') || lowerSql.includes('count(*) as total') || lowerSql.includes('count(*)')) {
+							let list = [...(rows['notifications'] || [])];
+							if (bindings.length > 0) {
+								const wsId = bindings[0];
+								list = list.filter((n: any) => n.workspace_id === undefined || String(n.workspace_id) === String(wsId));
+							}
+							if (bindings.length > 1) {
+								const uId = bindings[1];
+								list = list.filter((n: any) => n.user_id === undefined || String(n.user_id) === String(uId));
+							}
+							if (lowerSql.includes('is_read = 0')) {
+								list = list.filter((n: any) => Number(n.is_read || 0) === 0);
+							}
+							return { count: list.length, unread_count: list.length, total: list.length };
+						}
+						if (lowerSql.includes('select id from notifications') || lowerSql.includes('where workspace_id = ? and user_id = ? and type = ?')) {
+							const list = rows['notifications'] || [];
+							const found = list.find((n: any) => {
+								const matchWs = !n.workspace_id || String(n.workspace_id) === String(bindings[0]);
+								const matchUser = !n.user_id || String(n.user_id) === String(bindings[1]);
+								const matchType = String(n.type) === String(bindings[2]);
+								const matchRelType = String(n.related_entity_type) === String(bindings[3]);
+								const matchRelId = String(n.related_entity_id) === String(bindings[4]);
+								const matchRead = Number(n.is_read || 0) === 0;
+								const matchDate = !n.created_at || !bindings[5] || n.created_at >= bindings[5];
+								return matchWs && matchUser && matchType && matchRelType && matchRelId && matchRead && matchDate;
+							});
+							return found ?? null;
+						}
+						if (lowerSql.includes('where id = ? and workspace_id = ?')) {
+							const idToFind = bindings[0];
+							const wsToFind = bindings[1];
+							const found = (rows['notifications'] || []).find((r: any) =>
+								(r.id === undefined || String(r.id) === String(idToFind)) &&
+								(r.workspace_id === undefined || String(r.workspace_id) === String(wsToFind))
+							);
+							return found ?? null;
+						}
+					}
 					if (key === 'transactions' && lowerSql.includes('total_income') && (lowerSql.includes('sum(') || lowerSql.includes('count('))) {
 						let filtered = [...rows['transactions']];
 						if (lowerSql.includes('t.workspace_id = ?') && bindings.length > 0) {
@@ -144,9 +190,29 @@ export function createD1Mock(rows: Record<string, any[]> = {}) {
 				const lowerSql = sql.toLowerCase().trim();
 				if (key && rows[key] && lowerSql.startsWith('delete')) {
 					let targetId = bindings[0];
-					rows[key] = rows[key].filter((r: any) => String(r.id) !== String(targetId));
+					if (key === 'notifications' && bindings.length > 1) {
+						let wsId = bindings[1];
+						rows[key] = rows[key].filter((r: any) => !(String(r.id) === String(targetId) && (!r.workspace_id || String(r.workspace_id) === String(wsId))));
+					} else {
+						rows[key] = rows[key].filter((r: any) => String(r.id) !== String(targetId));
+					}
 				}
 				if (key && rows[key] && lowerSql.startsWith('insert')) {
+					if (key === 'notifications') {
+						const [id, workspace_id, user_id, type, title, message, related_entity_type, related_entity_id, is_read, created_at] = bindings;
+						rows[key].push({
+							id,
+							workspace_id,
+							user_id,
+							type,
+							title,
+							message,
+							related_entity_type: related_entity_type || null,
+							related_entity_id: related_entity_id || null,
+							is_read: Number(is_read || 0),
+							created_at: created_at || new Date().toISOString(),
+						});
+					}
 					if (key === 'account_transfers') {
 						const [id, workspace_id, from_account_id, to_account_id, amount, description, date] = bindings;
 						rows[key].push({
@@ -203,6 +269,28 @@ export function createD1Mock(rows: Record<string, any[]> = {}) {
 					}
 				}
 				if (key && rows[key] && lowerSql.startsWith('update')) {
+					if (key === 'notifications') {
+						if (lowerSql.includes('where workspace_id = ? and user_id = ?')) {
+							const wsId = bindings[0];
+							const uId = bindings[1];
+							rows[key].forEach((r: any) => {
+								if ((!r.workspace_id || String(r.workspace_id) === String(wsId)) &&
+									(!r.user_id || String(r.user_id) === String(uId))) {
+									if (!lowerSql.includes('is_read = 0') || Number(r.is_read || 0) === 0) {
+										r.is_read = 1;
+									}
+								}
+							});
+						} else if (lowerSql.includes('where id = ? and workspace_id = ?')) {
+							const idToFind = bindings[0];
+							const wsId = bindings[1];
+							const item = rows[key].find((r: any) =>
+								String(r.id) === String(idToFind) &&
+								(!r.workspace_id || String(r.workspace_id) === String(wsId))
+							);
+							if (item) item.is_read = 1;
+						}
+					}
 					let targetId = bindings[bindings.length - 1];
 					if (lowerSql.includes('where id = ? and workspace_id = ? and account_id = ?')) {
 						targetId = bindings[1];
@@ -423,6 +511,22 @@ export function createD1Mock(rows: Record<string, any[]> = {}) {
 							};
 						});
 						return { results: detailed, success: true };
+					}
+					if (key === 'notifications') {
+						let list = [...(rows['notifications'] || [])];
+						if (bindings.length > 0) {
+							const wsId = bindings[0];
+							list = list.filter((n: any) => n.workspace_id === undefined || String(n.workspace_id) === String(wsId));
+						}
+						if (bindings.length > 1) {
+							const uId = bindings[1];
+							list = list.filter((n: any) => n.user_id === undefined || String(n.user_id) === String(uId));
+						}
+						if (lowerSql.includes('is_read = 0')) {
+							list = list.filter((n: any) => Number(n.is_read || 0) === 0);
+						}
+						list.sort((a: any, b: any) => (b.created_at || '').localeCompare(a.created_at || ''));
+						return { results: list, success: true };
 					}
 					return { results: rows[key] ?? [], success: true };
 				}

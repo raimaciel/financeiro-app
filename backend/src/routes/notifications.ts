@@ -1,8 +1,11 @@
 import { Hono } from 'hono';
 import { authMiddleware } from '../auth';
 import type { Bindings, Variables } from '../auth';
-import { generateWorkspaceNotifications } from '../utils/notificationGenerator';
-import { formatDateISO } from '../utils/invoiceCalculator';
+import {
+	generateAndPersistNotifications,
+	getNotificationLinkAndSeverity,
+	type PersistedNotification,
+} from '../utils/notificationPersistence';
 
 const notificationsRouter = new Hono<{ Bindings: Bindings; Variables: Variables }>();
 
@@ -17,15 +20,14 @@ async function getWorkspaceMemberRole(db: D1Database, workspaceId: string, userI
 	return member ? member.role : null;
 }
 
-// GET /workspaces/:workspaceId/notifications - Obter notificações ativas em tempo real
+// 1. GET /workspaces/:workspaceId/notifications - Listar notificações persistidas
 notificationsRouter.get('/workspaces/:workspaceId/notifications', async (c) => {
 	const workspaceId = c.req.param('workspaceId');
 	const userId = String(c.get('userId'));
+
 	try {
 		const db = c.env.financeiro_db || (c.env as any).DB;
-
 		if (!db) {
-			console.error('[GET /notifications Error] Banco de dados não disponível');
 			return c.json({ error: 'Erro de configuração do servidor' }, 500);
 		}
 
@@ -38,102 +40,191 @@ notificationsRouter.get('/workspaces/:workspaceId/notifications', async (c) => {
 			return c.json({ error: 'Acesso negado. Você não é membro deste workspace' }, 403);
 		}
 
-		const now = new Date();
-		const todayISO = formatDateISO(now);
-		const currentMonth = todayISO.slice(0, 7); // YYYY-MM
-		const monthStart = `${currentMonth}-01`;
-		const monthEnd = `${currentMonth}-31`;
+		// Gera e persiste notificações em tempo real (faturas a vencer, saldo baixo, orçamentos)
+		await generateAndPersistNotifications(db, workspaceId, userId);
 
-		// 1. Buscar orçamentos com categorias
-		const { results: budgets } = await db
-			.prepare(`
-				SELECT b.id, b.workspace_id, b.category_id, b.monthly_limit, b.alert_threshold_percent, c.name as category_name
-				FROM budgets b
-				LEFT JOIN categories c ON c.id = b.category_id
-				WHERE b.workspace_id = ?
-			`)
-			.bind(workspaceId)
-			.all<any>();
+		// Parâmetros de paginação e filtro
+		const limitParam = Number(c.req.query('limit')) || 50;
+		const limit = Math.min(Math.max(limitParam, 1), 100);
+		const offset = Math.max(Number(c.req.query('offset')) || 0, 0);
+		const onlyUnread = c.req.query('unread') === 'true';
 
-		// 2. Buscar despesas do mês atual agrupadas por categoria
-		const { results: categoryExpenses } = await db
-			.prepare(`
-				SELECT category_id, SUM(amount) as total_spent
-				FROM transactions
-				WHERE workspace_id = ? AND type = 'expense' AND date >= ? AND date <= ?
-				GROUP BY category_id
-			`)
-			.bind(workspaceId, monthStart, monthEnd)
-			.all<any>();
+		// Query de listagem
+		let listQuery = `
+			SELECT id, workspace_id, user_id, type, title, message, related_entity_type, related_entity_id, is_read, created_at
+			FROM notifications
+			WHERE workspace_id = ? AND user_id = ?
+		`;
+		if (onlyUnread) {
+			listQuery += ' AND is_read = 0';
+		}
+		listQuery += ' ORDER BY created_at DESC LIMIT ? OFFSET ?';
 
-		const expensesByCategory: Record<number, number> = {};
-		(categoryExpenses || []).forEach((row) => {
-			if (row.category_id) {
-				const val = Number(row.total_spent !== undefined ? row.total_spent : (row.amount || 0));
-				expensesByCategory[row.category_id] = (expensesByCategory[row.category_id] || 0) + val;
-			}
-		});
+		const { results: rawItems } = await db
+			.prepare(listQuery)
+			.bind(workspaceId, userId, limit, offset)
+			.all<PersistedNotification>();
 
-		// 3. Buscar cartões de crédito, faturas e transações
-		const { results: creditCards } = await db
-			.prepare('SELECT id, name, brand, closing_day, due_day FROM credit_cards WHERE workspace_id = ?')
-			.bind(workspaceId)
-			.all<any>();
+		// Contagem de não lidas
+		const unreadCountResult = await db
+			.prepare('SELECT COUNT(*) as unread_count FROM notifications WHERE workspace_id = ? AND user_id = ? AND is_read = 0')
+			.bind(workspaceId, userId)
+			.first<{ unread_count: number; count?: number }>();
 
-		const { results: cardInvoices } = await db
-			.prepare('SELECT credit_card_id, reference_month, status, paid_at FROM invoices WHERE workspace_id = ?')
-			.bind(workspaceId)
-			.all<any>();
+		const unreadCount = unreadCountResult?.unread_count ?? unreadCountResult?.count ?? 0;
 
-		const { results: transactions } = await db
-			.prepare('SELECT id, credit_card_id, amount, date FROM transactions WHERE workspace_id = ?')
-			.bind(workspaceId)
-			.all<any>();
+		// Contagem total
+		const totalCountResult = await db
+			.prepare('SELECT COUNT(*) as total FROM notifications WHERE workspace_id = ? AND user_id = ?')
+			.bind(workspaceId, userId)
+			.first<{ total: number; count?: number }>();
 
-		// 4. Buscar metas de economia
-		const { results: savingsGoals } = await db
-			.prepare('SELECT id, name, target_amount, current_amount, target_date, status FROM savings_goals WHERE workspace_id = ?')
-			.bind(workspaceId)
-			.all<any>();
+		const totalCount = totalCountResult?.total ?? totalCountResult?.count ?? (rawItems || []).length;
 
-		// 5. Buscar regras de recorrência ativas com as colunas corretas da tabela
-		const { results: recurringRules } = await db
-			.prepare('SELECT id, description, amount, type, frequency, day_of_month, day_of_week, start_date, end_date, last_generated_date, status FROM recurring_transactions WHERE workspace_id = ? AND status = "active"')
-			.bind(workspaceId)
-			.all<any>();
-
-		// 6. Buscar data da última transação
-		const lastTx = await db
-			.prepare('SELECT date FROM transactions WHERE workspace_id = ? ORDER BY date DESC LIMIT 1')
-			.bind(workspaceId)
-			.first<any>();
-
-		const notifications = generateWorkspaceNotifications({
-			workspaceId,
-			budgets: budgets || [],
-			expensesByCategory,
-			creditCards: creditCards || [],
-			cardInvoices: cardInvoices || [],
-			savingsGoals: savingsGoals || [],
-			recurringRules: (recurringRules as any) || [],
-			transactions: transactions || [],
-			lastTransactionDate: lastTx?.date || null,
-			currentDate: now,
+		// Formata itens com metadata de link e severidade
+		const items = (rawItems || []).map((item) => {
+			const { related_link, severity } = getNotificationLinkAndSeverity(
+				item.type,
+				item.related_entity_type
+			);
+			return {
+				...item,
+				is_read: Number(item.is_read) === 1,
+				severity,
+				related_link,
+				created_context_date: item.created_at ? item.created_at.slice(0, 10) : undefined,
+			};
 		});
 
 		return c.json({
 			workspace_id: workspaceId,
-			total_count: notifications.length,
-			notifications,
+			total_count: totalCount,
+			total: totalCount,
+			unread_count: unreadCount,
+			notifications: items,
+			items,
+			limit,
+			offset,
 		});
 	} catch (err: any) {
 		console.error('[GET /notifications Error]', {
 			workspaceId,
 			userId,
 			errorMessage: err?.message || String(err),
-			stack: err?.stack,
 		});
-		return c.json({ error: 'Erro ao gerar notificações' }, 500);
+		return c.json({ error: 'Erro ao listar notificações' }, 500);
+	}
+});
+
+// 2. PATCH /workspaces/:workspaceId/notifications/:id/read - Marcar notificação como lida
+notificationsRouter.patch('/workspaces/:workspaceId/notifications/:id/read', async (c) => {
+	const workspaceId = c.req.param('workspaceId');
+	const id = c.req.param('id');
+	const userId = String(c.get('userId'));
+
+	try {
+		const db = c.env.financeiro_db || (c.env as any).DB;
+		if (!db) {
+			return c.json({ error: 'Erro de configuração do servidor' }, 500);
+		}
+
+		const role = await getWorkspaceMemberRole(db, workspaceId, userId);
+		if (!role) {
+			return c.json({ error: 'Acesso negado. Você não é membro deste workspace' }, 403);
+		}
+
+		const existing = await db
+			.prepare('SELECT id, workspace_id, user_id FROM notifications WHERE id = ? AND workspace_id = ?')
+			.bind(id, workspaceId)
+			.first<{ id: string; workspace_id: string; user_id: string }>();
+
+		if (!existing) {
+			return c.json({ error: 'Notificação não encontrada' }, 404);
+		}
+
+		if (String(existing.user_id) !== userId) {
+			return c.json({ error: 'Acesso negado a esta notificação' }, 403);
+		}
+
+		await db
+			.prepare('UPDATE notifications SET is_read = 1 WHERE id = ? AND workspace_id = ?')
+			.bind(id, workspaceId)
+			.run();
+
+		return c.json({ success: true, message: 'Notificação marcada como lida' });
+	} catch (err: any) {
+		console.error('[PATCH /notifications/:id/read Error]', err);
+		return c.json({ error: 'Erro ao marcar notificação como lida' }, 500);
+	}
+});
+
+// 3. PATCH /workspaces/:workspaceId/notifications/read-all - Marcar todas como lidas
+notificationsRouter.patch('/workspaces/:workspaceId/notifications/read-all', async (c) => {
+	const workspaceId = c.req.param('workspaceId');
+	const userId = String(c.get('userId'));
+
+	try {
+		const db = c.env.financeiro_db || (c.env as any).DB;
+		if (!db) {
+			return c.json({ error: 'Erro de configuração do servidor' }, 500);
+		}
+
+		const role = await getWorkspaceMemberRole(db, workspaceId, userId);
+		if (!role) {
+			return c.json({ error: 'Acesso negado. Você não é membro deste workspace' }, 403);
+		}
+
+		await db
+			.prepare('UPDATE notifications SET is_read = 1 WHERE workspace_id = ? AND user_id = ? AND is_read = 0')
+			.bind(workspaceId, userId)
+			.run();
+
+		return c.json({ success: true, message: 'Todas as notificações foram marcadas como lidas' });
+	} catch (err: any) {
+		console.error('[PATCH /notifications/read-all Error]', err);
+		return c.json({ error: 'Erro ao marcar todas as notificações como lidas' }, 500);
+	}
+});
+
+// 4. DELETE /workspaces/:workspaceId/notifications/:id - Excluir notificação
+notificationsRouter.delete('/workspaces/:workspaceId/notifications/:id', async (c) => {
+	const workspaceId = c.req.param('workspaceId');
+	const id = c.req.param('id');
+	const userId = String(c.get('userId'));
+
+	try {
+		const db = c.env.financeiro_db || (c.env as any).DB;
+		if (!db) {
+			return c.json({ error: 'Erro de configuração do servidor' }, 500);
+		}
+
+		const role = await getWorkspaceMemberRole(db, workspaceId, userId);
+		if (!role) {
+			return c.json({ error: 'Acesso negado. Você não é membro deste workspace' }, 403);
+		}
+
+		const existing = await db
+			.prepare('SELECT id, workspace_id, user_id FROM notifications WHERE id = ? AND workspace_id = ?')
+			.bind(id, workspaceId)
+			.first<{ id: string; workspace_id: string; user_id: string }>();
+
+		if (!existing) {
+			return c.json({ error: 'Notificação não encontrada' }, 404);
+		}
+
+		if (String(existing.user_id) !== userId) {
+			return c.json({ error: 'Acesso negado a esta notificação' }, 403);
+		}
+
+		await db
+			.prepare('DELETE FROM notifications WHERE id = ? AND workspace_id = ?')
+			.bind(id, workspaceId)
+			.run();
+
+		return c.json({ success: true, message: 'Notificação excluída com sucesso' });
+	} catch (err: any) {
+		console.error('[DELETE /notifications/:id Error]', err);
+		return c.json({ error: 'Erro ao excluir notificação' }, 500);
 	}
 });
 
