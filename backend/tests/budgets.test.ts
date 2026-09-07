@@ -5,50 +5,72 @@ import { generateToken } from '../src/auth';
 
 const JWT_SECRET = 'test-secret-key-for-unit-tests-1234567890';
 const WORKSPACE_ID = 'ws-budget-123';
+const OTHER_WORKSPACE_ID = 'ws-other-456';
 const USER_ID = 1;
 
-async function token() {
-	return generateToken({ userId: USER_ID, email: 'budget@test.com' }, JWT_SECRET);
+async function token(userId = USER_ID) {
+	return generateToken({ userId, email: `user${userId}@test.com` }, JWT_SECRET);
 }
 
-const memberRow = { role: 'owner' };
+const memberRow = { role: 'owner', user_id: String(USER_ID), workspace_id: WORKSPACE_ID };
+const viewerRow = { role: 'viewer', user_id: '2', workspace_id: WORKSPACE_ID };
 
-const budgetRow = {
-	id: 'b-1',
+const categoryRow = {
+	id: 10,
 	workspace_id: WORKSPACE_ID,
-	category_id: 10,
-	category_name: 'Alimentação',
-	category_icon: 'Utensils',
-	category_color: '#FF5733',
-	monthly_limit: 800.0,
-	month_reference: null,
-	alert_threshold_percent: 80,
+	name: 'Alimentação',
+	icon: 'Utensils',
+	color: '#FF5733',
+	type: 'expense',
 };
 
-const goalRow = {
-	id: 'g-1',
-	workspace_id: WORKSPACE_ID,
-	user_id: USER_ID,
-	name: 'Reserva de Emergência',
-	target_amount: 5000.0,
-	current_amount: 2500.0,
-	target_date: '2026-12-31',
-	status: 'active',
-};
-
-describe('Rotas de Orçamentos e Metas de Economia', () => {
-	it('GET /workspaces/:workspaceId/budgets - deve calcular gastos, percentual e status de alerta', async () => {
+describe('Rotas de Orçamentos por Categoria - Fase 10', () => {
+	it('1. deve calcular gastos, percentual consumido e status de alerta (ok, warning, exceeded)', async () => {
 		const env = createEnvMock({
 			workspace_members: [memberRow],
-			budgets: [budgetRow],
+			categories: [
+				categoryRow,
+				{ id: 20, workspace_id: WORKSPACE_ID, name: 'Lazer', icon: 'Film', color: '#10b981', type: 'expense' },
+				{ id: 30, workspace_id: WORKSPACE_ID, name: 'Transporte', icon: 'Car', color: '#3b82f6', type: 'expense' },
+			],
+			budgets: [
+				{
+					id: 'b-warning',
+					workspace_id: WORKSPACE_ID,
+					category_id: 10,
+					limit_amount: 1000.0,
+					monthly_limit: 1000.0,
+					month: '2026-10',
+					alert_threshold_percent: 80,
+				},
+				{
+					id: 'b-exceeded',
+					workspace_id: WORKSPACE_ID,
+					category_id: 20,
+					limit_amount: 500.0,
+					monthly_limit: 500.0,
+					month: '2026-10',
+					alert_threshold_percent: 80,
+				},
+				{
+					id: 'b-ok',
+					workspace_id: WORKSPACE_ID,
+					category_id: 30,
+					limit_amount: 600.0,
+					monthly_limit: 600.0,
+					month: '2026-10',
+					alert_threshold_percent: 80,
+				},
+			],
 			transactions: [
-				{ category_id: 10, total_spent: 700.0 }, // 700 / 800 = 87.5% -> warning
+				{ workspace_id: WORKSPACE_ID, category_id: 10, amount: 850.0, type: 'expense', date: '2026-10-05' }, // 85% -> warning
+				{ workspace_id: WORKSPACE_ID, category_id: 20, amount: 550.0, type: 'expense', date: '2026-10-08' }, // 110% -> exceeded
+				{ workspace_id: WORKSPACE_ID, category_id: 30, amount: 200.0, type: 'expense', date: '2026-10-12' }, // 33.3% -> ok
 			],
 		});
 		const tk = await token();
 
-		const req = new Request(`http://localhost/workspaces/${WORKSPACE_ID}/budgets?month=2026-08`, {
-			method: 'GET',
+		const req = new Request(`http://localhost/workspaces/${WORKSPACE_ID}/budgets?month=2026-10`, {
 			headers: { Authorization: `Bearer ${tk}` },
 		});
 
@@ -56,21 +78,37 @@ describe('Rotas de Orçamentos e Metas de Economia', () => {
 		expect(res.status).toBe(200);
 
 		const data = (await res.json()) as any;
-		expect(data.summary.total_budgeted).toBe(800.0);
-		expect(data.summary.total_spent).toBe(700.0);
+		expect(data.month).toBe('2026-10');
+		expect(data.summary.total_budgeted).toBe(2100.0);
+		expect(data.summary.total_spent).toBe(1600.0);
+		expect(data.summary.total_remaining).toBe(500.0);
 		expect(data.summary.warning_count).toBe(1);
-		expect(data.budgets).toHaveLength(1);
-		expect(data.budgets[0].percentage_used).toBe(87.5);
-		expect(data.budgets[0].status).toBe('warning');
+		expect(data.summary.exceeded_count).toBe(1);
+		expect(data.summary.ok_count).toBe(1);
+
+		const bWarning = data.budgets.find((b: any) => b.category_id === 10);
+		expect(bWarning.status).toBe('warning');
+		expect(bWarning.percentage_used).toBe(85.0);
+
+		const bExceeded = data.budgets.find((b: any) => b.category_id === 20);
+		expect(bExceeded.status).toBe('exceeded');
+		expect(bExceeded.percentage_used).toBe(110.0);
+
+		const bOk = data.budgets.find((b: any) => b.category_id === 30);
+		expect(bOk.status).toBe('ok');
+		expect(bOk.percentage_used).toBe(33.3);
 	});
 
-	it('POST /workspaces/:workspaceId/budgets - deve definir orçamento para categoria', async () => {
+	it('2. deve criar e atualizar (upsert) orçamento para o mesmo mês e categoria', async () => {
 		const env = createEnvMock({
 			workspace_members: [memberRow],
+			categories: [categoryRow],
+			budgets: [],
 		});
 		const tk = await token();
 
-		const req = new Request(`http://localhost/workspaces/${WORKSPACE_ID}/budgets`, {
+		// Criação inicial
+		const postReq1 = new Request(`http://localhost/workspaces/${WORKSPACE_ID}/budgets`, {
 			method: 'POST',
 			headers: {
 				'Content-Type': 'application/json',
@@ -78,104 +116,86 @@ describe('Rotas de Orçamentos e Metas de Economia', () => {
 			},
 			body: JSON.stringify({
 				category_id: 10,
-				monthly_limit: 1200.0,
-				alert_threshold_percent: 85,
+				limit_amount: 1000.0,
+				month: '2026-10',
+				alert_threshold_percent: 80,
 			}),
 		});
 
-		const res = await app.fetch(req, env);
-		expect(res.status).toBe(201);
+		const postRes1 = await app.fetch(postReq1, env);
+		expect(postRes1.status).toBe(201);
+		const postData1 = (await postRes1.json()) as any;
+		expect(postData1.message).toContain('definido');
+		const budgetId = postData1.id;
 
-		const data = (await res.json()) as any;
-		expect(data.message).toContain('Orçamento definido');
-	});
-
-	it('DELETE /workspaces/:workspaceId/budgets/:id - deve remover orçamento', async () => {
-		const env = createEnvMock({
-			workspace_members: [memberRow],
-			budgets: [budgetRow],
-		});
-		const tk = await token();
-
-		const req = new Request(`http://localhost/workspaces/${WORKSPACE_ID}/budgets/b-1`, {
-			method: 'DELETE',
-			headers: { Authorization: `Bearer ${tk}` },
-		});
-
-		const res = await app.fetch(req, env);
-		expect(res.status).toBe(200);
-	});
-
-	it('GET /workspaces/:workspaceId/goals - deve listar metas com cálculo de progresso', async () => {
-		const env = createEnvMock({
-			workspace_members: [memberRow],
-			savings_goals: [goalRow],
-		});
-		const tk = await token();
-
-		const req = new Request(`http://localhost/workspaces/${WORKSPACE_ID}/goals`, {
-			method: 'GET',
-			headers: { Authorization: `Bearer ${tk}` },
-		});
-
-		const res = await app.fetch(req, env);
-		expect(res.status).toBe(200);
-
-		const data = (await res.json()) as any;
-		expect(data.summary.total_goals).toBe(1);
-		expect(data.summary.overall_percentage).toBe(50.0);
-		expect(data.goals[0].progress_percentage).toBe(50.0);
-		expect(data.goals[0].remaining_amount).toBe(2500.0);
-	});
-
-	it('POST /workspaces/:workspaceId/goals - deve criar meta de economia', async () => {
-		const env = createEnvMock({
-			workspace_members: [memberRow],
-		});
-		const tk = await token();
-
-		const req = new Request(`http://localhost/workspaces/${WORKSPACE_ID}/goals`, {
+		// Upsert: atualiza o mesmo mês e categoria
+		const postReq2 = new Request(`http://localhost/workspaces/${WORKSPACE_ID}/budgets`, {
 			method: 'POST',
 			headers: {
 				'Content-Type': 'application/json',
 				Authorization: `Bearer ${tk}`,
 			},
 			body: JSON.stringify({
-				name: 'Viagem Japão',
-				target_amount: 15000.0,
-				current_amount: 1000.0,
+				category_id: 10,
+				limit_amount: 1500.0,
+				month: '2026-10',
+				alert_threshold_percent: 85,
 			}),
 		});
 
-		const res = await app.fetch(req, env);
-		expect(res.status).toBe(201);
-
-		const data = (await res.json()) as any;
-		expect(data.goal.name).toBe('Viagem Japão');
-		expect(data.goal.target_amount).toBe(15000.0);
+		const postRes2 = await app.fetch(postReq2, env);
+		expect(postRes2.status).toBe(200);
+		const postData2 = (await postRes2.json()) as any;
+		expect(postData2.message).toContain('atualizado');
+		expect(postData2.id).toBe(budgetId);
 	});
 
-	it('PATCH /workspaces/:workspaceId/goals/:id/deposit - deve somar depósito e concluir meta se atingir alvo', async () => {
+	it('3. deve excluir orçamento existente e rejeitar exclusão com permissão de viewer', async () => {
 		const env = createEnvMock({
-			workspace_members: [memberRow],
-			savings_goals: [{ id: 'g-1', target_amount: 1000.0, current_amount: 900.0 }],
-		});
-		const tk = await token();
-
-		const req = new Request(`http://localhost/workspaces/${WORKSPACE_ID}/goals/g-1/deposit`, {
-			method: 'PATCH',
-			headers: {
-				'Content-Type': 'application/json',
-				Authorization: `Bearer ${tk}`,
-			},
-			body: JSON.stringify({ amount: 150.0 }), // 900 + 150 = 1050 >= 1000 -> completed
+			workspace_members: [memberRow, viewerRow],
+			budgets: [
+				{
+					id: 'b-del',
+					workspace_id: WORKSPACE_ID,
+					category_id: 10,
+					limit_amount: 800.0,
+					monthly_limit: 800.0,
+				},
+			],
 		});
 
+		// Tentativa com viewer -> 403
+		const tkViewer = await token(2);
+		const viewerDelReq = new Request(`http://localhost/workspaces/${WORKSPACE_ID}/budgets/b-del`, {
+			method: 'DELETE',
+			headers: { Authorization: `Bearer ${tkViewer}` },
+		});
+		const viewerDelRes = await app.fetch(viewerDelReq, env);
+		expect(viewerDelRes.status).toBe(403);
+
+		// Sucesso com owner -> 200
+		const tkOwner = await token(1);
+		const ownerDelReq = new Request(`http://localhost/workspaces/${WORKSPACE_ID}/budgets/b-del`, {
+			method: 'DELETE',
+			headers: { Authorization: `Bearer ${tkOwner}` },
+		});
+		const ownerDelRes = await app.fetch(ownerDelReq, env);
+		expect(ownerDelRes.status).toBe(200);
+	});
+
+	it('4. deve barrar acesso de usuário que não pertence ao workspace', async () => {
+		const env = createEnvMock({
+			workspace_members: [
+				{ role: 'owner', user_id: '1', workspace_id: WORKSPACE_ID },
+			],
+			budgets: [],
+		});
+		const tkUser2 = await token(2);
+
+		const req = new Request(`http://localhost/workspaces/${WORKSPACE_ID}/budgets`, {
+			headers: { Authorization: `Bearer ${tkUser2}` },
+		});
 		const res = await app.fetch(req, env);
-		expect(res.status).toBe(200);
-
-		const data = (await res.json()) as any;
-		expect(data.current_amount).toBe(1050.0);
-		expect(data.status).toBe('completed');
+		expect(res.status).toBe(403);
 	});
 });

@@ -1,4 +1,4 @@
-﻿import React from "react";
+import React from "react";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
@@ -18,7 +18,8 @@ import Transactions from "./pages/Transactions";
 import ImportTransactions from "./pages/ImportTransactions";
 import ImportStatement from "./pages/ImportStatement";
 import RecurringTransactions from "./pages/RecurringTransactions";
-import BudgetsAndGoals from "./pages/BudgetsAndGoals";
+import Budgets from "./pages/Budgets";
+import Goals from "./pages/Goals";
 import AdminUsers from "./pages/AdminUsers";
 import Reports from "./pages/Reports";
 import Reconciliation from "./pages/Reconciliation";
@@ -38,7 +39,7 @@ export default function App() {
       <AuthProvider>
         <BrowserRouter>
           <Routes>
-            {/* Rotas PÃºblicas */}
+            {/* Rotas Públicas */}
             <Route path="/login" element={<Login />} />
             <Route path="/register" element={<Register />} />
 
@@ -54,14 +55,15 @@ export default function App() {
                 <Route path="/transactions" element={<Transactions />} />
                 <Route path="/import" element={<ImportTransactions />} />
                 <Route path="/recurring" element={<RecurringTransactions />} />
-                <Route path="/budgets" element={<BudgetsAndGoals />} />
+                <Route path="/budgets" element={<Budgets />} />
+                <Route path="/goals" element={<Goals />} />
                 <Route path="/reports" element={<Reports />} />
                 <Route path="/reconciliation" element={<Reconciliation />} />
                 <Route path="/admin/usuarios" element={<AdminUsers />} />
               </Route>
             </Route>
 
-            {/* Redirecionamento PadrÃ£o para Dashboard */}
+            {/* Redirecionamento Padrão para Dashboard */}
             <Route path="*" element={<Navigate to="/dashboard" replace />} />
           </Routes>
         </BrowserRouter>

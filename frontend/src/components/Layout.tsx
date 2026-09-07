@@ -23,6 +23,7 @@ import {
   FileSpreadsheet,
   Repeat,
   Target,
+  PieChart,
   ShieldCheck,
   GitMerge,
   LogOut,
@@ -130,16 +131,28 @@ export const Layout: React.FC = () => {
               </NavLink>
 
               <NavLink
-                to="/budgets"
-                className={({ isActive }) =>
-                  `flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium transition-colors ${
-                    isActive ? "bg-slate-100 text-primary font-semibold" : "text-muted-foreground hover:bg-slate-50 hover:text-primary"
-                  }`
-                }
-              >
-                <Target className="h-4 w-4" />
-                OrÃ§amentos
-              </NavLink>
+                  to="/budgets"
+                  className={({ isActive }) =>
+                    `flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium transition-colors ${
+                      isActive ? "bg-slate-100 text-primary font-semibold" : "text-muted-foreground hover:bg-slate-50 hover:text-primary"
+                    }`
+                  }
+                >
+                  <PieChart className="h-4 w-4" />
+                  Orçamentos
+                </NavLink>
+
+                <NavLink
+                  to="/goals"
+                  className={({ isActive }) =>
+                    `flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium transition-colors ${
+                      isActive ? "bg-slate-100 text-primary font-semibold" : "text-muted-foreground hover:bg-slate-50 hover:text-primary"
+                    }`
+                  }
+                >
+                  <Target className="h-4 w-4" />
+                  Metas
+                </NavLink>
 
               <NavLink
                 to="/recurring"
@@ -289,4 +302,5 @@ export const Layout: React.FC = () => {
     </div>
   );
 };
+
 

@@ -335,12 +335,16 @@ export interface Budget {
   category_name: string;
   category_icon?: string;
   category_color?: string;
+  limit_amount?: number;
   monthly_limit: number;
+  month?: string | null;
   month_reference?: string | null;
   alert_threshold_percent: number;
   spent_amount: number;
+  total_spent?: number;
   remaining_amount: number;
   percentage_used: number;
+  percentage?: number;
   status: "ok" | "warning" | "exceeded";
 }
 
@@ -360,23 +364,35 @@ export interface BudgetListResponse {
   budgets: Budget[];
 }
 
-export interface SavingsGoal {
+export type BudgetsResponse = BudgetListResponse;
+
+export interface FinancialGoal {
   id: string;
   workspace_id: string;
-  user_id: number;
+  user_id?: number;
   name: string;
   target_amount: number;
   current_amount: number;
+  deadline?: string | null;
   target_date?: string | null;
-  status: "active" | "completed" | "cancelled";
-  created_at?: string;
-  updated_at?: string;
+  account_id?: string | null;
+  account_name?: string | null;
+  account_color?: string | null;
+  account_bank_name?: string | null;
+  color?: string;
+  icon?: string;
+  status: "active" | "completed" | "archived" | "cancelled";
   progress_percentage: number;
+  percentage?: number;
   remaining_amount: number;
   days_remaining?: number | null;
+  created_at?: string;
+  updated_at?: string;
 }
 
-export interface SavingsGoalListResponse {
+export type SavingsGoal = FinancialGoal;
+
+export interface FinancialGoalListResponse {
   workspace_id: string;
   summary: {
     total_goals: number;
@@ -386,8 +402,11 @@ export interface SavingsGoalListResponse {
     total_saved_amount: number;
     overall_percentage: number;
   };
-  goals: SavingsGoal[];
+  goals: FinancialGoal[];
 }
+
+export type SavingsGoalListResponse = FinancialGoalListResponse;
+export type GoalsResponse = FinancialGoalListResponse;
 
 export interface ForecastItem {
   transaction_id: string | number;

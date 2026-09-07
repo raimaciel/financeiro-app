@@ -8,6 +8,12 @@ export function createD1Mock(rows: Record<string, any[]> = {}) {
 	if (!rows['notifications']) {
 		rows['notifications'] = [];
 	}
+	if (!rows['budgets']) {
+		rows['budgets'] = [];
+	}
+	if (!rows['financial_goals']) {
+		rows['financial_goals'] = [];
+	}
 	const defaultRow = rows['default']?.[0] ?? null;
 	// Ordena chaves pela mais longa primeiro para evitar que "transactions" intercepte "recurring_transactions"
 	const sortedKeys = Object.keys(rows).sort((a, b) => b.length - a.length);
@@ -16,6 +22,15 @@ export function createD1Mock(rows: Record<string, any[]> = {}) {
 		const lowerSql = sql.toLowerCase();
 		if (lowerSql.includes('notifications')) {
 			return 'notifications';
+		}
+		if (lowerSql.includes('financial_goals')) {
+			return 'financial_goals';
+		}
+		if (lowerSql.includes('savings_goals')) {
+			return 'savings_goals';
+		}
+		if (lowerSql.includes('from budgets') || lowerSql.includes('into budgets') || lowerSql.includes('update budgets') || lowerSql.includes('delete from budgets')) {
+			return 'budgets';
 		}
 		if (lowerSql.includes('from bank_accounts')) {
 			return 'bank_accounts';
@@ -83,6 +98,19 @@ export function createD1Mock(rows: Record<string, any[]> = {}) {
 							);
 							return found ?? null;
 						}
+					}
+					if (key === 'budgets' && lowerSql.includes('category_id = ?')) {
+						const wsId = bindings[0];
+						const catId = bindings[1];
+						const monthToFind = bindings[2];
+						const found = (rows['budgets'] || []).find((b: any) => {
+							const matchWs = !b.workspace_id || String(b.workspace_id) === String(wsId);
+							const matchCat = Number(b.category_id) === Number(catId);
+							const bMonth = b.month || b.month_reference;
+							const matchMonth = !monthToFind || bMonth === monthToFind;
+							return matchWs && matchCat && matchMonth;
+						});
+						return found ?? null;
 					}
 					if (key === 'transactions' && lowerSql.includes('total_income') && (lowerSql.includes('sum(') || lowerSql.includes('count('))) {
 						let filtered = [...rows['transactions']];
@@ -213,6 +241,41 @@ export function createD1Mock(rows: Record<string, any[]> = {}) {
 							created_at: created_at || new Date().toISOString(),
 						});
 					}
+					if (key === 'financial_goals') {
+						const [id, workspace_id, name, target_amount, current_amount, deadline, account_id, color, icon, status] = bindings;
+						rows[key].push({
+							id,
+							workspace_id,
+							name,
+							target_amount: Number(target_amount),
+							current_amount: Number(current_amount || 0),
+							deadline: deadline || null,
+							target_date: deadline || null,
+							account_id: account_id || null,
+							color: color || '#10b981',
+							icon: icon || 'Target',
+							status: status || 'active',
+							created_at: new Date().toISOString(),
+							updated_at: new Date().toISOString(),
+						});
+					}
+					if (key === 'budgets') {
+						const [id, workspace_id, category_id, limit_amount, monthly_limit, month, month_reference, alert_threshold_percent] = bindings;
+						const limitVal = Number(limit_amount !== undefined ? limit_amount : monthly_limit);
+						const monthVal = month || month_reference || null;
+						rows[key].push({
+							id,
+							workspace_id,
+							category_id: Number(category_id),
+							limit_amount: limitVal,
+							monthly_limit: limitVal,
+							month: monthVal,
+							month_reference: monthVal,
+							alert_threshold_percent: Number(alert_threshold_percent) || 80,
+							created_at: new Date().toISOString(),
+							updated_at: new Date().toISOString(),
+						});
+					}
 					if (key === 'account_transfers') {
 						const [id, workspace_id, from_account_id, to_account_id, amount, description, date] = bindings;
 						rows[key].push({
@@ -289,6 +352,33 @@ export function createD1Mock(rows: Record<string, any[]> = {}) {
 								(!r.workspace_id || String(r.workspace_id) === String(wsId))
 							);
 							if (item) item.is_read = 1;
+						}
+					}
+					if (key === 'financial_goals' || key === 'savings_goals') {
+						let targetId = bindings[bindings.length - 2];
+						if (!targetId || String(targetId).length < 3) targetId = bindings[bindings.length - 1];
+						const item = (rows[key] || []).find((r: any) => String(r.id) === String(targetId));
+						if (item) {
+							if (lowerSql.includes("status = 'completed'")) {
+								item.status = 'completed';
+							} else if (lowerSql.includes('set current_amount = ?')) {
+								item.current_amount = Number(bindings[0]);
+								item.status = bindings[1];
+							}
+						}
+					}
+					if (key === 'budgets') {
+						let targetId = bindings[bindings.length - 2];
+						if (!targetId || String(targetId).length < 3) targetId = bindings[bindings.length - 1];
+						const item = (rows['budgets'] || []).find((b: any) => String(b.id) === String(targetId));
+						if (item) {
+							if (lowerSql.includes('set limit_amount = ?') || lowerSql.includes('set monthly_limit = ?')) {
+								item.limit_amount = Number(bindings[0]);
+								item.monthly_limit = Number(bindings[0]);
+								item.alert_threshold_percent = Number(bindings[2]) || 80;
+								if (bindings[3]) item.month = bindings[3];
+								if (bindings[4]) item.month_reference = bindings[4];
+							}
 						}
 					}
 					let targetId = bindings[bindings.length - 1];
@@ -450,7 +540,27 @@ export function createD1Mock(rows: Record<string, any[]> = {}) {
 							filtered = filtered.filter((t: any) => t.type === typ);
 						}
 
-						if (lowerSql.includes('group by t.category_id')) {
+						if (lowerSql.includes('group by category_id') || lowerSql.includes('group by t.category_id')) {
+							if (lowerSql.includes("type = 'expense'") && lowerSql.includes('date like ?')) {
+								const wsId = bindings[0];
+								const prefix = String(bindings[1] || '').replace('%', '');
+								const filteredTxs = (rows['transactions'] || []).filter((t: any) =>
+									(!t.workspace_id || String(t.workspace_id) === String(wsId)) &&
+									t.type === 'expense' &&
+									t.category_id !== undefined && t.category_id !== null &&
+									(!prefix || !t.date || String(t.date).startsWith(prefix))
+								);
+								const spentMap = new Map<number, number>();
+								for (const tx of filteredTxs) {
+									const cId = Number(tx.category_id);
+									spentMap.set(cId, (spentMap.get(cId) || 0) + Number(tx.amount || tx.total_spent || 0));
+								}
+								const res = Array.from(spentMap.entries()).map(([category_id, total_spent]) => ({
+									category_id,
+									total_spent,
+								}));
+								return { results: res, success: true };
+							}
 							const groupMap = new Map<string, any>();
 							for (const t of filtered) {
 								const cat = rows['categories']?.find((c: any) => c.id === t.category_id);
@@ -526,6 +636,53 @@ export function createD1Mock(rows: Record<string, any[]> = {}) {
 							list = list.filter((n: any) => Number(n.is_read || 0) === 0);
 						}
 						list.sort((a: any, b: any) => (b.created_at || '').localeCompare(a.created_at || ''));
+						return { results: list, success: true };
+					}
+					if (key === 'financial_goals' || key === 'savings_goals') {
+						const targetKey = rows['financial_goals'] && rows['financial_goals'].length > 0 ? 'financial_goals' : (rows['savings_goals'] ? 'savings_goals' : key);
+						let list = [...(rows[targetKey] || [])];
+						if (bindings.length > 0) {
+							const wsId = bindings[0];
+							list = list.filter((g: any) => g.workspace_id === undefined || String(g.workspace_id) === String(wsId));
+						}
+						if (rows['bank_accounts']) {
+							list = list.map((g: any) => {
+								const acc = rows['bank_accounts'].find((a: any) => a.id === g.account_id);
+								return {
+									...g,
+									account_name: g.account_name ?? acc?.name,
+									account_color: g.account_color ?? acc?.color,
+									account_bank_name: g.account_bank_name ?? acc?.bank_name,
+								};
+							});
+						}
+						return { results: list, success: true };
+					}
+					if (key === 'budgets') {
+						let list = [...(rows['budgets'] || [])];
+						if (bindings.length > 0) {
+							const wsId = bindings[0];
+							list = list.filter((b: any) => b.workspace_id === undefined || String(b.workspace_id) === String(wsId));
+						}
+						if (bindings.length > 1 && bindings[1]) {
+							const m = bindings[1];
+							list = list.filter((b: any) => {
+								const bMonth = b.month || b.month_reference;
+								return !bMonth || bMonth === m;
+							});
+						}
+						if (rows['categories']) {
+							list = list.map((b: any) => {
+								const cat = rows['categories'].find((c: any) => c.id === b.category_id);
+								return {
+									...b,
+									category_name: b.category_name ?? cat?.name ?? 'Categoria',
+									category_icon: b.category_icon ?? cat?.icon ?? 'Circle',
+									category_color: b.category_color ?? cat?.color ?? '#999999',
+									category_type: b.category_type ?? cat?.type ?? 'expense',
+								};
+							});
+						}
 						return { results: list, success: true };
 					}
 					return { results: rows[key] ?? [], success: true };
