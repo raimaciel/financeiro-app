@@ -134,6 +134,8 @@ export interface Transaction {
   account_name?: string | null;
   account_color?: string | null;
   account_bank_name?: string | null;
+  reconciled?: number | boolean;
+  external_id?: string | null;
 }
 
 export interface TransactionSummary {
@@ -602,4 +604,71 @@ export interface ReportSummaryResponse {
   by_category: ReportCategorySummary[];
   by_account: ReportAccountSummary[];
   transactions: ReportTransactionItem[];
+}
+
+export type ReconciliationStatus = "matched_exact" | "matched_approximate" | "unmatched";
+export type ReconciliationAction = "ignore" | "link_existing" | "create_new";
+
+export interface ReconciliationMatchItem {
+  id: string;
+  date: string;
+  amount: number;
+  description: string;
+  type: "income" | "expense";
+  category_id?: number | null;
+  category_name?: string | null;
+  external_id?: string | null;
+  status: ReconciliationStatus;
+  confidence: "high" | "medium" | "none";
+  suggested_action: ReconciliationAction;
+  selected_action?: ReconciliationAction;
+  matched_transaction?: {
+    id: number;
+    date: string;
+    amount: number;
+    description: string;
+    type: "income" | "expense";
+    category_id?: number | null;
+    reconciled?: number | boolean;
+    external_id?: string | null;
+  } | null;
+  difference_days?: number;
+}
+
+export interface ReconciliationMatchResponse {
+  account: {
+    id: string;
+    name: string;
+    bank_name?: string | null;
+  };
+  total_items: number;
+  matched_exact_count: number;
+  matched_approximate_count: number;
+  unmatched_count: number;
+  items: ReconciliationMatchItem[];
+}
+
+export interface ReconciliationConfirmPayload {
+  decisions: Array<{
+    action: ReconciliationAction;
+    transaction_id?: number | null;
+    statement_item: {
+      id?: string;
+      date: string;
+      amount: number;
+      description: string;
+      type: "income" | "expense";
+      category_id?: number | null;
+      external_id?: string | null;
+    };
+  }>;
+}
+
+export interface ReconciliationConfirmResponse {
+  success: boolean;
+  linked_count: number;
+  created_count: number;
+  ignored_count: number;
+  total_processed: number;
+  message: string;
 }

@@ -141,7 +141,7 @@ export function createD1Mock(rows: Record<string, any[]> = {}) {
 			}),
 			run: vi.fn(async () => {
 				const key = getTargetKey(sql);
-				const lowerSql = sql.toLowerCase();
+				const lowerSql = sql.toLowerCase().trim();
 				if (key && rows[key] && lowerSql.startsWith('delete')) {
 					let targetId = bindings[0];
 					rows[key] = rows[key].filter((r: any) => String(r.id) !== String(targetId));
@@ -177,7 +177,14 @@ export function createD1Mock(rows: Record<string, any[]> = {}) {
 						});
 					}
 					if (key === 'transactions') {
-						const [workspace_id, user_id, category_id, account_id, type, description, amount, date] = bindings;
+						let workspace_id, user_id, category_id, account_id, type, description, amount, date, extId;
+						let reconciled = 0;
+						if (lowerSql.includes('reconciled')) {
+							[workspace_id, user_id, category_id, account_id, type, description, amount, date, extId] = bindings;
+							reconciled = 1;
+						} else {
+							[workspace_id, user_id, category_id, account_id, type, description, amount, date] = bindings;
+						}
 						const newId = rows[key].length + 1;
 						rows[key].push({
 							id: newId,
@@ -189,13 +196,17 @@ export function createD1Mock(rows: Record<string, any[]> = {}) {
 							description,
 							amount: Number(amount),
 							date,
+							reconciled,
+							external_id: extId || null,
 							created_at: new Date().toISOString(),
 						});
 					}
 				}
 				if (key && rows[key] && lowerSql.startsWith('update')) {
 					let targetId = bindings[bindings.length - 1];
-					if (lowerSql.includes('where id = ? and workspace_id = ?')) {
+					if (lowerSql.includes('where id = ? and workspace_id = ? and account_id = ?')) {
+						targetId = bindings[1];
+					} else if (lowerSql.includes('where id = ? and workspace_id = ?')) {
 						targetId = bindings[bindings.length - 2];
 					}
 					let targetIndex = rows[key].findIndex((r: any) => String(r.id) === String(targetId));
@@ -204,15 +215,21 @@ export function createD1Mock(rows: Record<string, any[]> = {}) {
 					}
 					if (targetIndex >= 0) {
 						const item = { ...rows[key][targetIndex] };
-						const setClause = lowerSql.split('set')[1]?.split('where')[0] || '';
-						const fieldAssignments = setClause.split(',').map((f) => f.trim().split('=')[0].trim());
-						const numAssigned = fieldAssignments.length;
-						fieldAssignments.forEach((field, idx) => {
-							if (field && idx < numAssigned && idx < bindings.length) {
-								item[field] = bindings[idx];
-							}
-						});
-						rows[key][targetIndex] = item;
+						if (lowerSql.includes('reconciled = 1')) {
+							item.reconciled = 1;
+							if (bindings[0]) item.external_id = bindings[0];
+							rows[key][targetIndex] = item;
+						} else {
+							const setClause = lowerSql.split('set')[1]?.split('where')[0] || '';
+							const fieldAssignments = setClause.split(',').map((f) => f.trim().split('=')[0].trim());
+							const numAssigned = fieldAssignments.length;
+							fieldAssignments.forEach((field, idx) => {
+								if (field && idx < numAssigned && idx < bindings.length) {
+									item[field] = bindings[idx];
+								}
+							});
+							rows[key][targetIndex] = item;
+						}
 					}
 				}
 				return {

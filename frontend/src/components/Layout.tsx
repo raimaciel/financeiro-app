@@ -1,4 +1,4 @@
-import React from "react";
+﻿import React from "react";
 import { NavLink, Outlet, useNavigate } from "react-router-dom";
 import { useAuth } from "@/hooks/useAuth";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
@@ -24,6 +24,7 @@ import {
   Repeat,
   Target,
   ShieldCheck,
+  GitMerge,
   LogOut,
   Briefcase,
   Plus,
@@ -125,7 +126,7 @@ export const Layout: React.FC = () => {
                 }
               >
                 <CreditCard className="h-4 w-4" />
-                Cartões
+                CartÃµes
               </NavLink>
 
               <NavLink
@@ -137,7 +138,7 @@ export const Layout: React.FC = () => {
                 }
               >
                 <Target className="h-4 w-4" />
-                Orçamentos
+                OrÃ§amentos
               </NavLink>
 
               <NavLink
@@ -149,7 +150,7 @@ export const Layout: React.FC = () => {
                 }
               >
                 <Repeat className="h-4 w-4" />
-                Recorrências
+                RecorrÃªncias
               </NavLink>
 
               <NavLink
@@ -173,7 +174,7 @@ export const Layout: React.FC = () => {
                 }
               >
                 <ArrowLeftRight className="h-4 w-4" />
-                Transações
+                TransaÃ§Ãµes
               </NavLink>
               <NavLink
                 to="/reports"
@@ -184,9 +185,21 @@ export const Layout: React.FC = () => {
                 }
               >
                 <BarChart3 className="h-4 w-4" />
-                Relatórios
+                RelatÃ³rios
               </NavLink>
 
+
+              <NavLink
+                to="/reconciliation"
+                className={({ isActive }) =>
+                  `flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium transition-colors ${
+                    isActive ? "bg-slate-100 text-primary font-semibold" : "text-muted-foreground hover:bg-slate-50 hover:text-primary"
+                  }`
+                }
+              >
+                <GitMerge className="h-4 w-4" />
+                Conciliar
+              </NavLink>
 
               {isAdmin && (
                 <NavLink
@@ -198,7 +211,7 @@ export const Layout: React.FC = () => {
                   }
                 >
                   <ShieldCheck className="h-4 w-4" />
-                  Usuários (Admin)
+                  UsuÃ¡rios (Admin)
                 </NavLink>
               )}
             </nav>
@@ -248,7 +261,7 @@ export const Layout: React.FC = () => {
               </NavLink>
             )}
 
-            {/* Sino de Notificações Global */}
+            {/* Sino de NotificaÃ§Ãµes Global */}
             {activeWorkspaceId && (
               <NotificationsPopover workspaceId={activeWorkspaceId} />
             )}
@@ -276,3 +289,4 @@ export const Layout: React.FC = () => {
     </div>
   );
 };
+

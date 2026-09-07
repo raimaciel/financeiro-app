@@ -17,6 +17,7 @@ import accountsRouter from './routes/accounts';
 import transfersRouter from './routes/transfers';
 import importsRouter from './routes/imports';
 import reportsRouter from './routes/reports';
+import reconciliationRouter from './routes/reconciliation';
 
 const app = new Hono<{ Bindings: Bindings; Variables: Variables }>();
 
@@ -231,6 +232,7 @@ app.route('/', accountsRouter);
 app.route('/', transfersRouter);
 app.route('/', importsRouter);
 app.route('/', reportsRouter);
+app.route('/', reconciliationRouter);
 app.route('/', adminRouter);
 
 // Handler global de erros (garante log detalhado no Cloudflare Workers / wrangler tail)
