@@ -1437,7 +1437,7 @@ export default function CreditCards() {
 
       {/* MODAL: DETALHES DE FATURAS E PREVISÃO FUTURA */}
       <Dialog open={!!invoicesCard} onOpenChange={(open) => !open && setInvoicesCard(null)}>
-        <DialogContent className="sm:max-w-2xl max-h-[88vh] overflow-y-auto p-0 gap-0">
+        <DialogContent className="sm:max-w-xl max-h-[88vh] overflow-x-hidden overflow-y-auto p-0 gap-0 w-full">
 
           {/* ── HEADER GRADIENTE ─────────────────────────────────────────── */}
           {(() => {
@@ -1449,15 +1449,15 @@ export default function CreditCards() {
               : inv.days_until_due < 0  ? 'from-rose-600 to-rose-800'
               :                          'from-primary to-blue-700';
             return (
-              <div className={`bg-gradient-to-br ${statusColor} px-6 pt-6 pb-5 rounded-t-xl text-white`}>
-                <div className="flex items-start justify-between gap-4">
-                  <div className="flex items-center gap-3">
+              <div className={`bg-gradient-to-br ${statusColor} px-6 pt-6 pb-5 rounded-t-xl text-white overflow-hidden`}>
+                <div className="flex items-start justify-between gap-4 min-w-0">
+                  <div className="flex items-center gap-3 min-w-0">
                     <div className="h-10 w-10 rounded-xl bg-white/15 flex items-center justify-center shrink-0 shadow-inner">
                       <Receipt className="h-5 w-5 text-white" />
                     </div>
                     <div>
                       <p className="text-white/70 text-xs font-medium uppercase tracking-widest">Faturas do Cartão</p>
-                      <h2 className="text-lg font-extrabold leading-tight">{invoicesCard?.name}</h2>
+                      <h2 className="text-lg font-extrabold leading-tight truncate">{invoicesCard?.name}</h2>
                     </div>
                   </div>
                   {inv && (
@@ -1482,12 +1482,12 @@ export default function CreditCards() {
             );
           })()}
 
-          <div className="px-5 py-4 space-y-5">
+          <div className="px-5 py-4 space-y-5 overflow-x-hidden min-w-0">
             {/* ── ABAS ─────────────────────────────────────────────────── */}
-            <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-xl">
+            <div className="flex w-full items-center gap-1 bg-slate-100 p-1 rounded-xl">
               <button
                 onClick={() => setInvoiceTab('invoices')}
-                className={`flex-1 flex items-center justify-center gap-2 py-2 px-3 text-xs font-bold rounded-lg transition-all ${
+                className={`w-1/2 flex items-center justify-center gap-2 py-2 px-3 text-xs font-bold rounded-lg transition-all ${
                   invoiceTab === 'invoices' ? 'bg-white text-primary shadow-sm' : 'text-slate-500 hover:text-slate-700'
                 }`}
               >
@@ -1496,7 +1496,7 @@ export default function CreditCards() {
               </button>
               <button
                 onClick={() => setInvoiceTab('forecast')}
-                className={`flex-1 flex items-center justify-center gap-2 py-2 px-3 text-xs font-bold rounded-lg transition-all ${
+                className={`w-1/2 flex items-center justify-center gap-2 py-2 px-3 text-xs font-bold rounded-lg transition-all ${
                   invoiceTab === 'forecast' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'
                 }`}
               >
@@ -1522,7 +1522,7 @@ export default function CreditCards() {
                 ) : (
                   <>
                     {/* ── CARROSSEL DE MESES ─────────────────────────── */}
-                    <div className="flex items-center gap-2 overflow-x-auto pb-1 -mx-1 px-1">
+                    <div className="flex items-center gap-2 overflow-x-auto pb-2 scroll-smooth">
                       {invoices.map((inv, idx) => {
                         const isActive = selectedInvoiceIndex === idx;
                         const pillColor =
@@ -1565,11 +1565,11 @@ export default function CreditCards() {
                       const duePct = isPaid ? 100 : Math.max(0, Math.min(100, 100 - (inv.days_until_due / 30) * 100));
                       const barColor = isPaid ? 'bg-emerald-500' : isOverdue ? 'bg-rose-500' : inv.days_until_due <= 5 ? 'bg-amber-500' : 'bg-primary';
                       return (
-                        <div className="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+                        <div className="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden min-w-0">
                           <div className={`h-1 w-full ${isPaid ? 'bg-emerald-500' : isClosed ? 'bg-amber-400' : isOverdue ? 'bg-rose-500' : 'bg-primary'}`} />
                           <div className="p-5 space-y-4">
-                            <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3">
-                              <div>
+                            <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3 min-w-0">
+                              <div className="min-w-0">
                                 <div className="flex items-center gap-2 flex-wrap">
                                   <h3 className="text-base font-extrabold text-slate-900">
                                     Fatura de {formatMonthYear(inv.reference_month)}
@@ -1579,9 +1579,9 @@ export default function CreditCards() {
                                     {badgeCfg.label}
                                   </span>
                                 </div>
-                                <div className="flex items-center gap-1.5 mt-1.5 text-xs text-slate-500">
-                                  <Calendar className="h-3.5 w-3.5 text-slate-400" />
-                                  <span>Compras de <strong>{formatDateBR(inv.start_date)}</strong> até <strong>{formatDateBR(inv.closing_date)}</strong></span>
+                                <div className="flex items-start gap-1.5 mt-1.5 text-xs text-slate-500 min-w-0">
+                                  <Calendar className="h-3.5 w-3.5 text-slate-400 shrink-0 mt-0.5" />
+                                  <span className="break-words">Compras de <strong>{formatDateBR(inv.start_date)}</strong> até <strong>{formatDateBR(inv.closing_date)}</strong></span>
                                 </div>
                               </div>
                               <div className="sm:text-right">
