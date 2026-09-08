@@ -22,5 +22,8 @@
 			"binding": "financeiro_comprovantes",
 			"remote": true
 		}
-	]
+	],
+	"vars": {
+		"ENVIRONMENT": "production"
+	}
 }

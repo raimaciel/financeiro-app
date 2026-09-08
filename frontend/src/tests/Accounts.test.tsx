@@ -142,7 +142,7 @@ describe("Página de Contas e Bancos", () => {
     fireEvent.change(bankInput, { target: { value: "Espécie" } });
 
     const balanceInput = screen.getByLabelText(/Saldo Inicial/i);
-    fireEvent.change(balanceInput, { target: { value: "350" } });
+    fireEvent.change(balanceInput, { target: { value: "35000" } });
 
     const submitBtn = screen.getByRole("button", { name: /Criar Conta/i });
     fireEvent.click(submitBtn);
@@ -154,6 +154,35 @@ describe("Página de Contas e Bancos", () => {
           name: "Carteira Dinheiro",
           bank_name: "Espécie",
           initial_balance: 350,
+        })
+      );
+    });
+  });
+
+  
+  it("deve aplicar máscara de moeda pt-BR no campo Saldo Inicial dinamicamente (ex: 012321 -> R$ 123,21)", async () => {
+    renderAccounts();
+
+    const newBtn = await screen.findByRole("button", { name: /Nova Conta/i });
+    fireEvent.click(newBtn);
+
+    const balanceInput = screen.getByLabelText(/Saldo Inicial/i) as HTMLInputElement;
+    fireEvent.change(balanceInput, { target: { value: "012321" } });
+
+    expect(balanceInput.value).toMatch(/123,21/);
+
+    const nameInput = screen.getByLabelText(/Nome da Conta/i);
+    fireEvent.change(nameInput, { target: { value: "Conta Teste Moeda" } });
+
+    const submitBtn = screen.getByRole("button", { name: /Criar Conta/i });
+    fireEvent.click(submitBtn);
+
+    await waitFor(() => {
+      expect(api.post).toHaveBeenCalledWith(
+        "/workspaces/ws-1/accounts",
+        expect.objectContaining({
+          name: "Conta Teste Moeda",
+          initial_balance: 123.21,
         })
       );
     });

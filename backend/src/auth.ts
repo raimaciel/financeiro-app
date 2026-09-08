@@ -7,6 +7,7 @@ export type Bindings = {
 	DB?: D1Database;
 	financeiro_comprovantes: R2Bucket;
 	JWT_SECRET: string;
+	ENVIRONMENT?: string;
 };
 
 export type Variables = {

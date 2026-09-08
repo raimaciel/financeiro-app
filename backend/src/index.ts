@@ -239,18 +239,17 @@ app.route('/', adminRouter);
 
 // Handler global de erros (garante log detalhado no Cloudflare Workers / wrangler tail)
 app.onError((err, c) => {
-	console.error('[Worker Global Error]', {
-		url: c.req.url,
-		method: c.req.method,
+	console.error(`[Worker Global Error 500] ${c.req.method} ${c.req.url}:`, {
 		errorMessage: err.message,
 		errorName: err.name,
 		stack: err.stack,
 	});
+
+	const isDev = c.env.ENVIRONMENT === 'development';
 	return c.json(
-		{
-			error: 'Erro interno do servidor',
-			message: err.message,
-		},
+		isDev
+			? { error: 'Erro interno do servidor', message: err.message, stack: err.stack }
+			: { error: 'Erro interno do servidor' },
 		500
 	);
 });

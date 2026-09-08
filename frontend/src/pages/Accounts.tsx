@@ -105,6 +105,13 @@ const PRESET_COLORS = [
   "#0f172a", // Preto
 ];
 
+function formatCentsToCurrency(cents: number): string {
+  return (cents / 100).toLocaleString('pt-BR', {
+    style: 'currency',
+    currency: 'BRL',
+  });
+}
+
 function formatCurrency(val: number): string {
   return new Intl.NumberFormat("pt-BR", {
     style: "currency",
@@ -145,7 +152,8 @@ export default function Accounts() {
   const [formName, setFormName] = useState<string>("");
   const [formBankName, setFormBankName] = useState<string>("");
   const [formAccountType, setFormAccountType] = useState<AccountType>("checking");
-  const [formInitialBalance, setFormInitialBalance] = useState<string>("0");
+  const [formInitialBalanceCents, setFormInitialBalanceCents] = useState<number>(0);
+  const [formInitialBalanceDisplay, setFormInitialBalanceDisplay] = useState<string>(() => formatCentsToCurrency(0));
   const [formColor, setFormColor] = useState<string>("#2563eb");
   const [formStatus, setFormStatus] = useState<"active" | "archived">("active");
   const [formError, setFormError] = useState<string | null>(null);
@@ -315,7 +323,8 @@ export default function Accounts() {
     setFormName("");
     setFormBankName("");
     setFormAccountType("checking");
-    setFormInitialBalance("0");
+    setFormInitialBalanceCents(0);
+    setFormInitialBalanceDisplay(formatCentsToCurrency(0));
     setFormColor("#2563eb");
     setFormStatus("active");
     setFormError(null);
@@ -327,7 +336,9 @@ export default function Accounts() {
     setFormName(acc.name);
     setFormBankName(acc.bank_name || "");
     setFormAccountType(acc.account_type);
-    setFormInitialBalance(String(acc.initial_balance || 0));
+    const editCents = Math.round(Number(acc.initial_balance || 0) * 100);
+    setFormInitialBalanceCents(editCents);
+    setFormInitialBalanceDisplay(formatCentsToCurrency(editCents));
     setFormColor(acc.color || "#2563eb");
     setFormStatus(acc.status);
     setFormError(null);
@@ -340,6 +351,13 @@ export default function Accounts() {
     setFormError(null);
   };
 
+  const handleInitialBalanceChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const rawDigits = e.target.value.replace(/\D/g, "");
+    const cents = rawDigits ? parseInt(rawDigits, 10) : 0;
+    setFormInitialBalanceCents(cents);
+    setFormInitialBalanceDisplay(formatCentsToCurrency(cents));
+  };
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!formName.trim()) {
@@ -347,17 +365,13 @@ export default function Accounts() {
       return;
     }
 
-    const balNum = parseFloat(formInitialBalance.replace(",", "."));
-    if (isNaN(balNum)) {
-      setFormError("Informe um saldo inicial válido.");
-      return;
-    }
+    const initialBalanceReal = formInitialBalanceCents / 100;
 
     const payload = {
       name: formName.trim(),
       bank_name: formBankName.trim() || null,
       account_type: formAccountType,
-      initial_balance: balNum,
+      initial_balance: initialBalanceReal,
       color: formColor,
       status: formStatus,
     };
@@ -861,11 +875,11 @@ export default function Accounts() {
                   <Label htmlFor="acc-balance">Saldo Inicial (R$)</Label>
                   <Input
                     id="acc-balance"
-                    type="number"
-                    step="0.01"
-                    placeholder="0,00"
-                    value={formInitialBalance}
-                    onChange={(e) => setFormInitialBalance(e.target.value)}
+                    type="text"
+                    inputMode="numeric"
+                    placeholder="R$ 0,00"
+                    value={formInitialBalanceDisplay}
+                    onChange={handleInitialBalanceChange}
                   />
                 </div>
               </div>
