@@ -832,22 +832,55 @@ creditCardsRouter.delete('/workspaces/:workspaceId/credit-cards/:id', async (c) 
 			return c.json({ error: 'Cartão de crédito não encontrado' }, 404);
 		}
 
-		// Verificar se há transações vinculadas a esse cartão
-		const usage = await db
-			.prepare('SELECT COUNT(*) as count FROM transactions WHERE credit_card_id = ?')
+		// Exclusão em cascata: apaga dados dependentes antes do cartão
+		// 1. Remove notificações vinculadas a faturas deste cartão
+		await db
+			.prepare(`DELETE FROM notifications WHERE workspace_id = ? AND (
+				data LIKE '%"card_id":"' || ? || '"%'
+				OR data LIKE '%"cardId":"' || ? || '"%'
+			)`)
+			.bind(workspaceId, cardId, cardId)
+			.run()
+			.catch(() => {}); // ignora se tabela não existir ainda
+
+		// 2. Remove transações recorrentes vinculadas
+		await db
+			.prepare('DELETE FROM recurring_transactions WHERE credit_card_id = ? AND workspace_id = ?')
+			.bind(cardId, workspaceId)
+			.run()
+			.catch(() => {});
+
+		// 3. Remove transações vinculadas
+		await db
+			.prepare('DELETE FROM transactions WHERE credit_card_id = ? AND workspace_id = ?')
+			.bind(cardId, workspaceId)
+			.run();
+
+		// 4. Remove faturas vinculadas
+		await db
+			.prepare('DELETE FROM invoices WHERE credit_card_id = ?')
 			.bind(cardId)
-			.first<{ count: number }>();
+			.run();
 
-		if (usage && usage.count > 0) {
-			return c.json({ error: 'Cartão possui transações vinculadas, não pode ser removido' }, 400);
-		}
+		// 5. Remove imagem do R2 se houver
+		try {
+			const cardWithImage = await db
+				.prepare('SELECT card_image_url FROM credit_cards WHERE id = ?')
+				.bind(cardId)
+				.first<{ card_image_url: string | null }>();
+			if (cardWithImage?.card_image_url) {
+				const r2 = (c.env as any).financeiro_r2 || (c.env as any).R2;
+				if (r2) await r2.delete(cardWithImage.card_image_url);
+			}
+		} catch (_) {}
 
+		// 6. Remove o cartão
 		await db
 			.prepare('DELETE FROM credit_cards WHERE id = ? AND workspace_id = ?')
 			.bind(cardId, workspaceId)
 			.run();
 
-		return c.json({ message: 'Cartão de crédito removido com sucesso' }, 200);
+		return c.json({ message: 'Cartão de crédito e todos os dados vinculados foram removidos com sucesso' }, 200);
 	} catch (err) {
 		console.error('Erro ao deletar cartão de crédito:', err);
 		return c.json({ error: 'Erro ao deletar cartão de crédito' }, 500);

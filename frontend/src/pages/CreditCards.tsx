@@ -1775,6 +1775,52 @@ export default function CreditCards() {
           </div>
         </DialogContent>
       </Dialog>
+      {/* MODAL: CONFIRMAR EXCLUSÃO DO CARTÃO */}
+      <Dialog open={!!deleteTarget} onOpenChange={(open) => !open && setDeleteTarget(null)}>
+        <DialogContent className="sm:max-w-[420px]">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-rose-700">
+              <Trash2 className="h-5 w-5" />
+              Excluir Cartão
+            </DialogTitle>
+            <DialogDescription className="pt-1">
+              Tem certeza que deseja excluir o cartão{' '}
+              <strong className="text-slate-800">{deleteTarget?.name}</strong>?
+            </DialogDescription>
+          </DialogHeader>
+          <div className="rounded-lg bg-rose-50 border border-rose-200 p-3 text-xs text-rose-800 space-y-1">
+            <p className="font-bold flex items-center gap-1.5">
+              <Trash2 className="h-3.5 w-3.5 shrink-0" />
+              Esta ação é permanente e irá apagar:
+            </p>
+            <ul className="ml-5 list-disc space-y-0.5 text-rose-700">
+              <li>Todas as transações vinculadas a este cartão</li>
+              <li>Todas as faturas e histórico de pagamentos</li>
+              <li>Todas as transações recorrentes associadas</li>
+            </ul>
+          </div>
+          <DialogFooter className="gap-2 sm:gap-0 pt-1">
+            <Button
+              variant="outline"
+              onClick={() => setDeleteTarget(null)}
+              disabled={deleteMutation.isPending}
+            >
+              Cancelar
+            </Button>
+            <Button
+              onClick={() => {
+                if (!deleteTarget || !selectedWorkspaceId) return;
+                deleteMutation.mutate({ workspaceId: selectedWorkspaceId, id: deleteTarget.id });
+              }}
+              disabled={deleteMutation.isPending}
+              className="bg-rose-600 hover:bg-rose-700 text-white font-bold gap-1.5"
+            >
+              {deleteMutation.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
+              Sim, excluir permanentemente
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
       {/* MODAL DE PAGAMENTO DA FATURA */}
       <Dialog open={!!payingInvoice} onOpenChange={(open) => !open && setPayingInvoice(null)}>
         <DialogContent className="sm:max-w-[425px]">
