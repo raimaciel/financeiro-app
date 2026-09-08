@@ -64,12 +64,12 @@ export const Layout: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col">
-      <header className="sticky top-0 z-40 border-b bg-white shadow-xs">
-        <div className="mx-auto flex h-16 max-w-7xl items-center justify-between px-4 sm:px-6 lg:px-8">
-          <div className="flex items-center gap-8">
+      <header className="sticky top-0 z-40 border-b bg-white shadow-xs overflow-x-hidden">
+        <div className="mx-auto flex h-16 max-w-7xl items-center justify-between px-4 sm:px-6 lg:px-8 w-full overflow-x-hidden">
+          <div className="flex items-center gap-4 min-w-0 flex-1">
             <span className="text-xl font-extrabold tracking-tight text-primary">Financeiro App</span>
             
-            <nav className="hidden md:flex items-center gap-1">
+            <nav className="hidden md:flex items-center gap-1 overflow-x-auto scrollbar-none min-w-0">
               <NavLink
                 to="/dashboard"
                 className={({ isActive }) =>
@@ -230,7 +230,7 @@ export const Layout: React.FC = () => {
             </nav>
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2 shrink-0">
             {/* Seletor Global de Workspace */}
             {loadingWorkspaces ? (
               <div className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-muted-foreground bg-slate-50 border rounded-md">
@@ -241,7 +241,7 @@ export const Layout: React.FC = () => {
               <Select value={selectedWorkspaceId} onValueChange={setSelectedWorkspaceId}>
                 <SelectTrigger
                   id="global-workspace-select"
-                  className="h-9 w-40 sm:w-48 bg-white border-slate-200 text-xs sm:text-sm font-medium"
+                  className="h-9 w-36 sm:w-44 bg-white border-slate-200 text-xs sm:text-sm font-medium"
                 >
                   <div className="flex items-center gap-2 truncate">
                     <Briefcase className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
@@ -279,7 +279,7 @@ export const Layout: React.FC = () => {
               <NotificationsPopover workspaceId={activeWorkspaceId} />
             )}
 
-            <div className="flex items-center gap-3 pl-2 border-l border-slate-200">
+            <div className="flex items-center gap-2 pl-2 border-l border-slate-200">
               <Avatar className="h-9 w-9 border">
                 <AvatarFallback className="bg-slate-200 text-slate-700 font-semibold">{userInitials}</AvatarFallback>
               </Avatar>
