@@ -1437,234 +1437,342 @@ export default function CreditCards() {
 
       {/* MODAL: DETALHES DE FATURAS E PREVISÃO FUTURA */}
       <Dialog open={!!invoicesCard} onOpenChange={(open) => !open && setInvoicesCard(null)}>
-        <DialogContent className="sm:max-w-2xl max-h-[88vh] overflow-y-auto">
-          <DialogHeader>
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <Receipt className="h-5 w-5 text-primary" />
-                <DialogTitle className="text-lg">Faturas: {invoicesCard?.name}</DialogTitle>
-              </div>
-              <Badge variant="outline" className="text-xs">
-                Fecha dia {invoicesCard?.closing_day} • Vence dia {invoicesCard?.due_day}
-              </Badge>
-            </div>
-            <DialogDescription>
-              Acompanhe lançamentos da fatura atual, histórico e previsão de parcelas futuras.
-            </DialogDescription>
-          </DialogHeader>
+        <DialogContent className="sm:max-w-2xl max-h-[88vh] overflow-y-auto p-0 gap-0">
 
-          {/* Abas dentro do Modal de Faturas */}
-          <div className="flex items-center gap-2 border-b border-slate-200 pt-1">
-            <button
-              onClick={() => setInvoiceTab("invoices")}
-              className={`flex items-center gap-2 pb-2 px-3 text-xs font-bold border-b-2 transition-all ${
-                invoiceTab === "invoices"
-                  ? "border-primary text-primary"
-                  : "border-transparent text-slate-500 hover:text-slate-800"
-              }`}
-            >
-              <Receipt className="h-3.5 w-3.5" />
-              Faturas por Mês ({invoices.length})
-            </button>
-
-            <button
-              onClick={() => setInvoiceTab("forecast")}
-              className={`flex items-center gap-2 pb-2 px-3 text-xs font-bold border-b-2 transition-all ${
-                invoiceTab === "forecast"
-                  ? "border-primary text-primary"
-                  : "border-transparent text-slate-500 hover:text-slate-800"
-              }`}
-            >
-              <TrendingUp className="h-3.5 w-3.5" />
-              Previsão Futura (Parcelas)
-            </button>
-          </div>
-
-          {/* ABA 1: FATURAS POR MÊS */}
-          {invoiceTab === "invoices" && (
-            <div className="space-y-4 pt-2">
-              {loadingInvoices ? (
-                <div className="py-12 text-center text-slate-400">
-                  <RefreshCw className="h-6 w-6 animate-spin mx-auto text-primary mb-2" />
-                  Carregando faturas...
-                </div>
-              ) : invoices.length === 0 ? (
-                <p className="text-xs text-slate-400 text-center py-8">Nenhuma fatura encontrada para este cartão.</p>
-              ) : (
-                <>
-                  {/* Seletor de Faturas */}
-                  <div className="flex items-center gap-2 overflow-x-auto pb-1">
-                    {invoices.map((inv, idx) => (
-                      <button
-                        key={inv.id}
-                        onClick={() => setSelectedInvoiceIndex(idx)}
-                        className={`px-3 py-1.5 rounded-lg text-xs font-bold shrink-0 transition-all border ${
-                          selectedInvoiceIndex === idx
-                            ? "bg-slate-900 text-white border-slate-900 shadow-xs"
-                            : "bg-white text-slate-600 border-slate-200 hover:bg-slate-50"
-                        }`}
-                      >
-                        {formatMonthYear(inv.reference_month)}
-                      </button>
-                    ))}
+          {/* ── HEADER GRADIENTE ─────────────────────────────────────────── */}
+          {(() => {
+            const inv = selectedInvoice;
+            const statusColor =
+              !inv ? 'from-slate-700 to-slate-900'
+              : inv.status === 'paid'   ? 'from-emerald-600 to-emerald-800'
+              : inv.status === 'closed' ? 'from-amber-500 to-amber-700'
+              : inv.days_until_due < 0  ? 'from-rose-600 to-rose-800'
+              :                          'from-primary to-blue-700';
+            return (
+              <div className={`bg-gradient-to-br ${statusColor} px-6 pt-6 pb-5 rounded-t-xl text-white`}>
+                <div className="flex items-start justify-between gap-4">
+                  <div className="flex items-center gap-3">
+                    <div className="h-10 w-10 rounded-xl bg-white/15 flex items-center justify-center shrink-0 shadow-inner">
+                      <Receipt className="h-5 w-5 text-white" />
+                    </div>
+                    <div>
+                      <p className="text-white/70 text-xs font-medium uppercase tracking-widest">Faturas do Cartão</p>
+                      <h2 className="text-lg font-extrabold leading-tight">{invoicesCard?.name}</h2>
+                    </div>
                   </div>
+                  {inv && (
+                    <div className="text-right shrink-0">
+                      <p className="text-white/60 text-[10px] font-semibold uppercase tracking-wider">Fatura Selecionada</p>
+                      <p className="text-3xl font-black leading-none mt-0.5 tabular-nums">
+                        {formatCurrency(inv.total_amount)}
+                      </p>
+                      <p className="text-white/60 text-xs mt-0.5">{formatMonthYear(inv.reference_month)}</p>
+                    </div>
+                  )}
+                </div>
+                <div className="flex items-center gap-3 mt-3 text-white/60 text-xs">
+                  <span className="flex items-center gap-1">
+                    <Lock className="h-3 w-3" /> Fecha dia {invoicesCard?.closing_day}
+                  </span>
+                  <span className="flex items-center gap-1">
+                    <CalendarDays className="h-3 w-3" /> Vence dia {invoicesCard?.due_day}
+                  </span>
+                </div>
+              </div>
+            );
+          })()}
 
-                  {/* Card Destaque da Fatura Selecionada */}
-                  {selectedInvoice && (
-                    <Card className="bg-slate-50 border shadow-xs">
-                      <CardContent className="p-4 space-y-3">
-                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-200">
-                          <div>
-                            <div className="flex items-center gap-2">
-                              <h3 className="text-base font-black text-slate-900">
-                                Fatura de {formatMonthYear(selectedInvoice.reference_month)}
-                              </h3>
-                              <Badge
-                                className={`text-[11px] font-bold ${
-                                  selectedInvoice.status === "paid"
-                                    ? "bg-emerald-100 text-emerald-800 border-emerald-200"
-                                    : selectedInvoice.status === "closed"
-                                    ? "bg-amber-100 text-amber-800 border-amber-200"
-                                    : "bg-blue-100 text-blue-800 border-blue-200"
-                                }`}
-                              >
-                                {selectedInvoice.status === "paid"
-                                  ? "Fatura Paga"
-                                  : selectedInvoice.status === "closed"
-                                  ? "Fatura Fechada"
-                                  : "Fatura Aberta"}
-                              </Badge>
+          <div className="px-5 py-4 space-y-5">
+            {/* ── ABAS ─────────────────────────────────────────────────── */}
+            <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-xl">
+              <button
+                onClick={() => setInvoiceTab('invoices')}
+                className={`flex-1 flex items-center justify-center gap-2 py-2 px-3 text-xs font-bold rounded-lg transition-all ${
+                  invoiceTab === 'invoices' ? 'bg-white text-primary shadow-sm' : 'text-slate-500 hover:text-slate-700'
+                }`}
+              >
+                <Receipt className="h-3.5 w-3.5" />
+                Faturas por Mês ({invoices.length})
+              </button>
+              <button
+                onClick={() => setInvoiceTab('forecast')}
+                className={`flex-1 flex items-center justify-center gap-2 py-2 px-3 text-xs font-bold rounded-lg transition-all ${
+                  invoiceTab === 'forecast' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'
+                }`}
+              >
+                <TrendingUp className="h-3.5 w-3.5" />
+                Previsão Futura (Parcelas)
+              </button>
+            </div>
+
+            {/* ── ABA 1: FATURAS POR MÊS ─────────────────────────────── */}
+            {invoiceTab === 'invoices' && (
+              <div className="space-y-4">
+                {loadingInvoices ? (
+                  <div className="py-12 text-center text-slate-400">
+                    <RefreshCw className="h-6 w-6 animate-spin mx-auto text-primary mb-2" />
+                    <p className="text-sm">Carregando faturas...</p>
+                  </div>
+                ) : invoices.length === 0 ? (
+                  <div className="py-12 text-center">
+                    <Receipt className="h-10 w-10 text-slate-200 mx-auto mb-3" />
+                    <p className="text-sm text-slate-400 font-medium">Nenhuma fatura encontrada para este cartão.</p>
+                    <p className="text-xs text-slate-300 mt-1">As faturas aparecerão após as primeiras compras.</p>
+                  </div>
+                ) : (
+                  <>
+                    {/* ── CARROSSEL DE MESES ─────────────────────────── */}
+                    <div className="flex items-center gap-2 overflow-x-auto pb-1 -mx-1 px-1">
+                      {invoices.map((inv, idx) => {
+                        const isActive = selectedInvoiceIndex === idx;
+                        const pillColor =
+                          inv.status === 'paid'
+                            ? isActive ? 'bg-emerald-600 text-white border-emerald-600' : 'border-emerald-200 text-emerald-700 hover:bg-emerald-50'
+                          : inv.status === 'closed'
+                            ? isActive ? 'bg-amber-500 text-white border-amber-500' : 'border-amber-200 text-amber-700 hover:bg-amber-50'
+                          : inv.days_until_due < 0
+                            ? isActive ? 'bg-rose-600 text-white border-rose-600' : 'border-rose-200 text-rose-700 hover:bg-rose-50'
+                            : isActive ? 'bg-primary text-white border-primary' : 'border-slate-200 text-slate-600 hover:bg-slate-50';
+                        return (
+                          <button
+                            key={inv.id}
+                            onClick={() => setSelectedInvoiceIndex(idx)}
+                            className={`flex flex-col items-center px-3 py-2 rounded-xl text-xs font-bold shrink-0 transition-all border shadow-xs ${pillColor}`}
+                          >
+                            <span className="whitespace-nowrap">{formatMonthYear(inv.reference_month)}</span>
+                            <span className={`text-[10px] font-semibold mt-0.5 ${isActive ? 'text-white/80' : 'text-slate-400'}`}>
+                              {formatCurrency(inv.total_amount)}
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+
+                    {/* ── CARD DESTAQUE DA FATURA SELECIONADA ─────────── */}
+                    {selectedInvoice && (() => {
+                      const inv = selectedInvoice;
+                      const isPaid   = inv.status === 'paid';
+                      const isClosed = inv.status === 'closed';
+                      const isOverdue = !isPaid && inv.days_until_due < 0;
+                      const daysAbs = Math.abs(inv.days_until_due);
+                      const badgeCfg = isPaid
+                        ? { label: 'Paga',    icon: <CheckCircle2 className="h-3 w-3" />, cls: 'bg-emerald-100 text-emerald-800 border-emerald-200' }
+                        : isClosed
+                        ? { label: 'Fechada', icon: <Lock className="h-3 w-3" />,        cls: 'bg-amber-100 text-amber-800 border-amber-200' }
+                        : isOverdue
+                        ? { label: 'Vencida', icon: <Clock className="h-3 w-3" />,       cls: 'bg-rose-100 text-rose-800 border-rose-200' }
+                        : { label: 'Aberta',  icon: <Clock className="h-3 w-3" />,       cls: 'bg-blue-100 text-blue-800 border-blue-200' };
+                      const duePct = isPaid ? 100 : Math.max(0, Math.min(100, 100 - (inv.days_until_due / 30) * 100));
+                      const barColor = isPaid ? 'bg-emerald-500' : isOverdue ? 'bg-rose-500' : inv.days_until_due <= 5 ? 'bg-amber-500' : 'bg-primary';
+                      return (
+                        <div className="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+                          <div className={`h-1 w-full ${isPaid ? 'bg-emerald-500' : isClosed ? 'bg-amber-400' : isOverdue ? 'bg-rose-500' : 'bg-primary'}`} />
+                          <div className="p-5 space-y-4">
+                            <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3">
+                              <div>
+                                <div className="flex items-center gap-2 flex-wrap">
+                                  <h3 className="text-base font-extrabold text-slate-900">
+                                    Fatura de {formatMonthYear(inv.reference_month)}
+                                  </h3>
+                                  <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-bold border ${badgeCfg.cls}`}>
+                                    {badgeCfg.icon}
+                                    {badgeCfg.label}
+                                  </span>
+                                </div>
+                                <div className="flex items-center gap-1.5 mt-1.5 text-xs text-slate-500">
+                                  <Calendar className="h-3.5 w-3.5 text-slate-400" />
+                                  <span>Compras de <strong>{formatDateBR(inv.start_date)}</strong> até <strong>{formatDateBR(inv.closing_date)}</strong></span>
+                                </div>
+                              </div>
+                              <div className="sm:text-right">
+                                <p className="text-[10px] text-slate-400 font-semibold uppercase tracking-wider">Total da Fatura</p>
+                                <p className={`text-3xl font-black tabular-nums leading-none mt-0.5 ${
+                                  isPaid ? 'text-emerald-600' : isOverdue ? 'text-rose-600' : isClosed ? 'text-amber-600' : 'text-primary'
+                                }`}>
+                                  {formatCurrency(inv.total_amount)}
+                                </p>
+                                {inv.transactions_count > 0 && (
+                                  <p className="text-[10px] text-slate-400 mt-1">{inv.transactions_count} lançamento(s)</p>
+                                )}
+                              </div>
                             </div>
-                            <p className="text-xs text-slate-500 mt-0.5">
-                              Compras de {formatDateBR(selectedInvoice.start_date)} até {formatDateBR(selectedInvoice.closing_date)}
-                            </p>
-                          </div>
 
-                          <div className="text-left sm:text-right">
-                            <span className="text-xs text-slate-400 font-semibold uppercase">Total da Fatura</span>
-                            <p className="text-2xl font-black text-slate-900">
-                              {formatCurrency(selectedInvoice.total_amount)}
-                            </p>
-                          </div>
-                        </div>
+                            <div className="rounded-xl bg-slate-50 border border-slate-100 p-3 space-y-2">
+                              <div className="flex items-center justify-between text-xs">
+                                <div className="flex items-center gap-1.5 text-slate-600">
+                                  <CalendarDays className="h-3.5 w-3.5 text-slate-400" />
+                                  <span>Vencimento: <strong className="text-slate-800">{formatDateBR(inv.due_date)}</strong></span>
+                                </div>
+                                <div>
+                                  {!isPaid ? (
+                                    <span className={`font-bold text-xs px-2 py-0.5 rounded-full ${
+                                      isOverdue ? 'bg-rose-100 text-rose-700'
+                                      : inv.days_until_due <= 5 ? 'bg-amber-100 text-amber-700'
+                                      : 'bg-blue-50 text-blue-700'
+                                    }`}>
+                                      {isOverdue ? `Venceu há ${daysAbs}d` : inv.days_until_due === 0 ? 'Vence hoje!' : `Vence em ${inv.days_until_due}d`}
+                                    </span>
+                                  ) : (
+                                    inv.paid_at && (
+                                      <span className="font-medium text-emerald-700 text-xs">
+                                        Paga em {formatDateBR(inv.paid_at.slice(0, 10))}
+                                      </span>
+                                    )
+                                  )}
+                                </div>
+                              </div>
+                              {!isPaid && (
+                                <div className="w-full bg-slate-200 rounded-full h-1.5 overflow-hidden">
+                                  <div
+                                    className={`h-1.5 rounded-full transition-all duration-500 ${barColor}`}
+                                    style={{ width: `${duePct}%` }}
+                                  />
+                                </div>
+                              )}
+                            </div>
 
-                        {/* Informações de Vencimento e Ação de Pagar */}
-                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pt-1 text-xs">
-                          <div className="text-slate-600 flex flex-wrap items-center gap-2">
-                            <span>Vencimento: <strong>{formatDateBR(selectedInvoice.due_date)}</strong></span>
-                            {selectedInvoice.status !== "paid" ? (
-                              <span className="text-slate-400">
-                                ({selectedInvoice.days_until_due < 0 ? `venceu há ${Math.abs(selectedInvoice.days_until_due)}d` : `em ${selectedInvoice.days_until_due}d`})
-                              </span>
-                            ) : (
-                              selectedInvoice.paid_at && (
-                                <span className="text-emerald-700 font-medium">
-                                  • Paga em {formatDateBR(selectedInvoice.paid_at.slice(0, 10))}
-                                </span>
-                              )
+                            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                              {isPaid ? (
+                                inv.payment_account_name ? (
+                                  <div className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-full bg-emerald-50 text-emerald-800 border border-emerald-200 text-xs font-semibold">
+                                    <span
+                                      className="h-2 w-2 rounded-full inline-block shrink-0"
+                                      style={{ backgroundColor: inv.payment_account_color || '#10b981' }}
+                                    />
+                                    Pago com: <strong>{inv.payment_account_name}</strong>
+                                  </div>
+                                ) : (
+                                  <div className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-full bg-emerald-50 text-emerald-800 border border-emerald-200 text-xs font-semibold">
+                                    <CheckCircle2 className="h-3.5 w-3.5" />
+                                    Fatura quitada
+                                  </div>
+                                )
+                              ) : (
+                                canEdit && (
+                                  <Button
+                                    size="sm"
+                                    onClick={() => handleStartPayInvoice(inv)}
+                                    className="h-8 px-4 text-xs bg-emerald-600 hover:bg-emerald-700 text-white font-bold gap-1.5 shadow-sm"
+                                  >
+                                    <CheckCircle2 className="h-3.5 w-3.5" />
+                                    Marcar como Paga
+                                  </Button>
+                                )
+                              )}
+                            </div>
+
+                            {inv.transactions && inv.transactions.length > 0 && (
+                              <div className="pt-3 border-t border-slate-100">
+                                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2">Lançamentos</p>
+                                <div className="space-y-1.5 max-h-40 overflow-y-auto pr-1">
+                                  {inv.transactions.map((tx) => (
+                                    <div
+                                      key={tx.id}
+                                      className="flex items-center justify-between text-xs py-1.5 px-2 rounded-lg hover:bg-slate-50 transition-colors"
+                                    >
+                                      <div className="flex items-center gap-2 min-w-0">
+                                        <span className="h-1.5 w-1.5 rounded-full bg-rose-400 shrink-0" />
+                                        <span className="text-slate-600 truncate max-w-[200px]">{tx.description || 'Sem descrição'}</span>
+                                        {tx.installments && tx.installments > 1 && (
+                                          <span className="text-purple-700 bg-purple-50 px-1 py-0.5 rounded font-semibold text-[10px] shrink-0">
+                                            {tx.installment_current}/{tx.installments}x
+                                          </span>
+                                        )}
+                                      </div>
+                                      <div className="text-right shrink-0 ml-2">
+                                        <span className="font-bold text-slate-800">{formatCurrency(tx.amount)}</span>
+                                        <span className="text-[10px] text-slate-400 block">{formatDateBR(tx.date)}</span>
+                                      </div>
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
                             )}
                           </div>
+                        </div>
+                      );
+                    })()}
+                  </>
+                )}
+              </div>
+            )}
 
-                          {selectedInvoice.status === "paid" ? (
-                            selectedInvoice.payment_account_name ? (
-                              <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-50 text-emerald-800 border border-emerald-200 text-xs font-medium">
-                                <span
-                                  className="h-2 w-2 rounded-full inline-block shrink-0"
-                                  style={{ backgroundColor: selectedInvoice.payment_account_color || "#10b981" }}
-                                />
-                                <span>Pago com: <strong>{selectedInvoice.payment_account_name}</strong></span>
-                              </div>
-                            ) : null
-                          ) : (
-                            canEdit && (
-                              <Button
-                                size="sm"
-                                onClick={() => handleStartPayInvoice(selectedInvoice)}
-                                className="h-7 px-3 text-xs bg-emerald-600 hover:bg-emerald-700 text-white font-bold gap-1"
-                              >
-                                <CheckCircle2 className="h-3.5 w-3.5" /> Marcar como Paga
-                              </Button>
-                            )
+            {/* ── ABA 2: PREVISÃO FUTURA (PARCELAS) ──────────────────── */}
+            {invoiceTab === 'forecast' && (
+              <div className="space-y-4">
+                {loadingForecast ? (
+                  <div className="py-12 text-center text-slate-400">
+                    <RefreshCw className="h-6 w-6 animate-spin mx-auto text-primary mb-2" />
+                    <p className="text-sm">Calculando projeções de parcelas...</p>
+                  </div>
+                ) : !forecastData || forecastData.forecast.length === 0 ? (
+                  <div className="py-12 text-center">
+                    <Sparkles className="h-10 w-10 text-slate-200 mx-auto mb-3" />
+                    <p className="text-sm text-slate-400 font-medium">Nenhuma compra parcelada futura encontrada.</p>
+                    <p className="text-xs text-slate-300 mt-1">Compras parceladas aparecerão aqui automaticamente.</p>
+                  </div>
+                ) : (
+                  <>
+                    <div className="p-4 rounded-2xl bg-gradient-to-r from-indigo-50 to-purple-50 border border-indigo-100 flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <div className="h-8 w-8 rounded-xl bg-indigo-100 flex items-center justify-center">
+                          <Sparkles className="h-4 w-4 text-indigo-600" />
+                        </div>
+                        <div>
+                          <p className="text-xs font-bold text-indigo-900">Total Comprometido nos Próximos 6 Meses:</p>
+                          <p className="text-[10px] text-indigo-600">Parcelas confirmadas</p>
+                        </div>
+                      </div>
+                      <strong className="text-indigo-900 text-xl font-black tabular-nums">
+                        {formatCurrency(forecastData.total_committed_future)}
+                      </strong>
+                    </div>
+
+                    <div className="space-y-3">
+                      {forecastData.forecast.map((m) => (
+                        <div key={m.reference_month} className="rounded-xl bg-white border border-slate-200 shadow-xs overflow-hidden">
+                          <div className="flex items-center justify-between px-4 py-3 bg-slate-50 border-b border-slate-100">
+                            <div>
+                              <span className="font-extrabold text-sm text-slate-900">{m.month_label}</span>
+                              <span className="text-[10px] text-slate-400 block mt-0.5">
+                                Fecha em {formatDateBR(m.closing_date)} • Vence em {formatDateBR(m.due_date)}
+                              </span>
+                            </div>
+                            <div className="text-right">
+                              <span className="text-base font-black text-rose-600 tabular-nums">
+                                {formatCurrency(m.predicted_total)}
+                              </span>
+                              <span className="text-[10px] text-slate-400 block mt-0.5">
+                                {m.installments_count} parcela(s)
+                              </span>
+                            </div>
+                          </div>
+                          {m.items.length > 0 && (
+                            <div className="px-4 py-2 space-y-1.5">
+                              {m.items.map((it, i) => (
+                                <div key={i} className="flex items-center justify-between text-xs py-1">
+                                  <div className="flex items-center gap-2 min-w-0">
+                                    <span className="h-1.5 w-1.5 rounded-full bg-rose-300 shrink-0" />
+                                    <span className="text-slate-600 truncate max-w-[200px]">{it.description}</span>
+                                    {it.installments > 1 && (
+                                      <span className="text-purple-700 bg-purple-50 px-1.5 py-0.5 rounded-md font-semibold text-[10px] shrink-0">
+                                        {it.installment_current}/{it.installments}x
+                                      </span>
+                                    )}
+                                  </div>
+                                  <span className="font-semibold text-slate-800 shrink-0 ml-2">{formatCurrency(it.amount)}</span>
+                                </div>
+                              ))}
+                            </div>
                           )}
                         </div>
-                      </CardContent>
-                    </Card>
-                  )}
-                </>
-              )}
-            </div>
-          )}
-
-          {/* ABA 2: PREVISÃO FUTURA (PARCELAS) */}
-          {invoiceTab === "forecast" && (
-            <div className="space-y-4 pt-2">
-              {loadingForecast ? (
-                <div className="py-12 text-center text-slate-400">
-                  <RefreshCw className="h-6 w-6 animate-spin mx-auto text-primary mb-2" />
-                  Calculando projeções de parcelas...
-                </div>
-              ) : !forecastData || forecastData.forecast.length === 0 ? (
-                <p className="text-xs text-slate-400 text-center py-8">Nenhuma compra parcelada futura encontrada.</p>
-              ) : (
-                <>
-                  <div className="p-3 rounded-lg bg-indigo-50/60 border border-indigo-100 flex items-center justify-between text-xs">
-                    <div className="flex items-center gap-2">
-                      <Sparkles className="h-4 w-4 text-indigo-600" />
-                      <span className="font-semibold text-indigo-900">Total Comprometido nos Próximos 6 Meses:</span>
+                      ))}
                     </div>
-                    <strong className="text-indigo-900 text-sm font-black">
-                      {formatCurrency(forecastData.total_committed_future)}
-                    </strong>
-                  </div>
-
-                  <div className="space-y-3">
-                    {forecastData.forecast.map((m) => (
-                      <div
-                        key={m.reference_month}
-                        className="p-3.5 rounded-xl bg-white border border-slate-200 shadow-xs space-y-2"
-                      >
-                        <div className="flex items-center justify-between">
-                          <div>
-                            <span className="font-extrabold text-sm text-slate-900">{m.month_label}</span>
-                            <span className="text-xs text-slate-400 block">
-                              Fecha em {formatDateBR(m.closing_date)} • Vence em {formatDateBR(m.due_date)}
-                            </span>
-                          </div>
-                          <div className="text-right">
-                            <span className="text-sm font-black text-rose-600">
-                              {formatCurrency(m.predicted_total)}
-                            </span>
-                            <span className="text-[11px] text-slate-400 block">
-                              {m.installments_count} parcela(s)
-                            </span>
-                          </div>
-                        </div>
-
-                        {/* Itens detalhados */}
-                        {m.items.length > 0 && (
-                          <div className="pt-2 border-t border-slate-100 space-y-1">
-                            {m.items.map((it, i) => (
-                              <div key={i} className="flex items-center justify-between text-xs text-slate-600">
-                                <span className="truncate max-w-[240px]">
-                                  {it.description}{" "}
-                                  {it.installments > 1 && (
-                                    <span className="text-purple-700 bg-purple-50 px-1 py-0.2 rounded font-semibold text-[10px]">
-                                      {it.installment_current}/{it.installments}x
-                                    </span>
-                                  )}
-                                </span>
-                                <span className="font-semibold text-slate-800">{formatCurrency(it.amount)}</span>
-                              </div>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                </>
-              )}
-            </div>
-          )}
+                  </>
+                )}
+              </div>
+            )}
+          </div>
         </DialogContent>
       </Dialog>
       {/* MODAL DE PAGAMENTO DA FATURA */}

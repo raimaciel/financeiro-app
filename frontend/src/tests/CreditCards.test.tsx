@@ -253,7 +253,7 @@ describe("Página de Cartões de Crédito e Faturas", () => {
 
     // Verifica que o modal de faturas abriu com a fatura aberta
     await waitFor(() => {
-      expect(screen.getByText("Fatura Aberta")).toBeInTheDocument();
+      expect(screen.getByText("Aberta")).toBeInTheDocument();
       expect(screen.getByRole("button", { name: /Marcar como Paga/i })).toBeInTheDocument();
     });
 
