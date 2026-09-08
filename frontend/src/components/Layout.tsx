@@ -69,11 +69,11 @@ export const Layout: React.FC = () => {
           <div className="flex items-center gap-4 min-w-0 flex-1">
             <span className="text-xl font-extrabold tracking-tight text-primary">Financeiro App</span>
             
-            <nav className="hidden md:flex items-center gap-1 overflow-x-auto scrollbar-none min-w-0">
+            <nav className="hidden md:flex items-center gap-4 overflow-x-auto no-scrollbar min-w-0">
               <NavLink
                 to="/dashboard"
                 className={({ isActive }) =>
-                  `flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium transition-colors ${
+                  `flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium transition-colors whitespace-nowrap shrink-0 ${
                     isActive ? "bg-slate-100 text-primary font-semibold" : "text-muted-foreground hover:bg-slate-50 hover:text-primary"
                   }`
                 }
@@ -85,7 +85,7 @@ export const Layout: React.FC = () => {
               <NavLink
                 to="/workspaces"
                 className={({ isActive }) =>
-                  `flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium transition-colors ${
+                  `flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium transition-colors whitespace-nowrap shrink-0 ${
                     isActive ? "bg-slate-100 text-primary font-semibold" : "text-muted-foreground hover:bg-slate-50 hover:text-primary"
                   }`
                 }
@@ -97,7 +97,7 @@ export const Layout: React.FC = () => {
               <NavLink
                 to="/categories"
                 className={({ isActive }) =>
-                  `flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium transition-colors ${
+                  `flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium transition-colors whitespace-nowrap shrink-0 ${
                     isActive ? "bg-slate-100 text-primary font-semibold" : "text-muted-foreground hover:bg-slate-50 hover:text-primary"
                   }`
                 }
@@ -109,7 +109,7 @@ export const Layout: React.FC = () => {
               <NavLink
                 to="/accounts"
                 className={({ isActive }) =>
-                  `flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium transition-colors ${
+                  `flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium transition-colors whitespace-nowrap shrink-0 ${
                     isActive ? "bg-slate-100 text-primary font-semibold" : "text-muted-foreground hover:bg-slate-50 hover:text-primary"
                   }`
                 }
@@ -121,7 +121,7 @@ export const Layout: React.FC = () => {
               <NavLink
                 to="/credit-cards"
                 className={({ isActive }) =>
-                  `flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium transition-colors ${
+                  `flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium transition-colors whitespace-nowrap shrink-0 ${
                     isActive ? "bg-slate-100 text-primary font-semibold" : "text-muted-foreground hover:bg-slate-50 hover:text-primary"
                   }`
                 }
@@ -133,7 +133,7 @@ export const Layout: React.FC = () => {
               <NavLink
                   to="/budgets"
                   className={({ isActive }) =>
-                    `flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium transition-colors ${
+                    `flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium transition-colors whitespace-nowrap shrink-0 ${
                       isActive ? "bg-slate-100 text-primary font-semibold" : "text-muted-foreground hover:bg-slate-50 hover:text-primary"
                     }`
                   }
@@ -145,7 +145,7 @@ export const Layout: React.FC = () => {
                 <NavLink
                   to="/goals"
                   className={({ isActive }) =>
-                    `flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium transition-colors ${
+                    `flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium transition-colors whitespace-nowrap shrink-0 ${
                       isActive ? "bg-slate-100 text-primary font-semibold" : "text-muted-foreground hover:bg-slate-50 hover:text-primary"
                     }`
                   }
@@ -157,7 +157,7 @@ export const Layout: React.FC = () => {
               <NavLink
                 to="/recurring"
                 className={({ isActive }) =>
-                  `flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium transition-colors ${
+                  `flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium transition-colors whitespace-nowrap shrink-0 ${
                     isActive ? "bg-slate-100 text-primary font-semibold" : "text-muted-foreground hover:bg-slate-50 hover:text-primary"
                   }`
                 }
@@ -169,7 +169,7 @@ export const Layout: React.FC = () => {
               <NavLink
                 to="/import"
                 className={({ isActive }) =>
-                  `flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium transition-colors ${
+                  `flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium transition-colors whitespace-nowrap shrink-0 ${
                     isActive ? "bg-slate-100 text-primary font-semibold" : "text-muted-foreground hover:bg-slate-50 hover:text-primary"
                   }`
                 }
@@ -181,7 +181,7 @@ export const Layout: React.FC = () => {
               <NavLink
                 to="/transactions"
                 className={({ isActive }) =>
-                  `flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium transition-colors ${
+                  `flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium transition-colors whitespace-nowrap shrink-0 ${
                     isActive ? "bg-slate-100 text-primary font-semibold" : "text-muted-foreground hover:bg-slate-50 hover:text-primary"
                   }`
                 }
@@ -192,7 +192,7 @@ export const Layout: React.FC = () => {
               <NavLink
                 to="/reports"
                 className={({ isActive }) =>
-                  `flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium transition-colors ${
+                  `flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium transition-colors whitespace-nowrap shrink-0 ${
                     isActive ? "bg-slate-100 text-primary font-semibold" : "text-muted-foreground hover:bg-slate-50 hover:text-primary"
                   }`
                 }
@@ -205,7 +205,7 @@ export const Layout: React.FC = () => {
               <NavLink
                 to="/reconciliation"
                 className={({ isActive }) =>
-                  `flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium transition-colors ${
+                  `flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium transition-colors whitespace-nowrap shrink-0 ${
                     isActive ? "bg-slate-100 text-primary font-semibold" : "text-muted-foreground hover:bg-slate-50 hover:text-primary"
                   }`
                 }
@@ -218,7 +218,7 @@ export const Layout: React.FC = () => {
                 <NavLink
                   to="/admin/usuarios"
                   className={({ isActive }) =>
-                    `flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium transition-colors ${
+                    `flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium transition-colors whitespace-nowrap shrink-0 ${
                       isActive ? "bg-amber-100 text-amber-900 font-semibold" : "text-amber-700 hover:bg-amber-50 hover:text-amber-900"
                     }`
                   }
