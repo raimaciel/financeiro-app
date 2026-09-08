@@ -43,7 +43,7 @@ const mockGoalsData = {
     {
       id: "goal-1",
       workspace_id: "ws-goals-test",
-      name: "Reserva de Emerg�ncia",
+      name: "Reserva de Emergência",
       target_amount: 10000.0,
       current_amount: 3000.0,
       deadline: "2027-12-31",
@@ -104,26 +104,26 @@ function renderGoals() {
   );
 }
 
-describe("P�gina de Metas Financeiras - Fase 10", () => {
+describe("Página de Metas Financeiras - Fase 10", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     window.localStorage.clear();
   });
 
-  it("1. deve renderizar o t�tulo, KPIs e os cards das metas", async () => {
+  it("1. deve renderizar o título, KPIs e os cards das metas", async () => {
     renderGoals();
 
     expect(screen.getByText("Metas Financeiras")).toBeInTheDocument();
 
     await waitFor(() => {
-      expect(screen.getByText("Reserva de Emerg�ncia")).toBeInTheDocument();
+      expect(screen.getByText("Reserva de Emergência")).toBeInTheDocument();
       expect(screen.getByText("Viagem Praia")).toBeInTheDocument();
-      expect(screen.getByText("30.0% conclu�do")).toBeInTheDocument();
-      expect(screen.getByText("100.0% conclu�do")).toBeInTheDocument();
+      expect(screen.getByText("30.0% concluído")).toBeInTheDocument();
+      expect(screen.getByText("100.0% concluído")).toBeInTheDocument();
     });
   });
 
-  it("2. deve abrir modal 'Nova Meta', preencher formul�rio e submeter com sucesso", async () => {
+  it("2. deve abrir modal 'Nova Meta', preencher formulário e submeter com sucesso", async () => {
     renderGoals();
 
     const newGoalBtn = screen.getByRole("button", { name: /Nova Meta/i });
@@ -131,7 +131,7 @@ describe("P�gina de Metas Financeiras - Fase 10", () => {
 
     expect(screen.getByText("Nova Meta Financeira")).toBeInTheDocument();
 
-    const nameInput = screen.getByPlaceholderText("Ex: Reserva de Emerg�ncia, Carro Novo");
+    const nameInput = screen.getByPlaceholderText("Ex: Reserva de Emergência, Carro Novo");
     fireEvent.change(nameInput, { target: { value: "Comprar Notebook" } });
 
     const targetInput = screen.getByPlaceholderText("Ex: 10000,00");
@@ -151,11 +151,11 @@ describe("P�gina de Metas Financeiras - Fase 10", () => {
     });
   });
 
-  it("3. deve abrir modal de aporte e registrar dep�sito na meta", async () => {
+  it("3. deve abrir modal de aporte e registrar depósito na meta", async () => {
     renderGoals();
 
     await waitFor(() => {
-      expect(screen.getByText("Reserva de Emerg�ncia")).toBeInTheDocument();
+      expect(screen.getByText("Reserva de Emergência")).toBeInTheDocument();
     });
 
     const depositBtn = screen.getByRole("button", { name: /Registrar Aporte/i });
@@ -177,14 +177,14 @@ describe("P�gina de Metas Financeiras - Fase 10", () => {
     });
   });
 
-  it("4. deve marcar meta como conclu�da manualmente ao clicar no bot�o correspondente", async () => {
+  it("4. deve marcar meta como concluída manualmente ao clicar no botão correspondente", async () => {
     renderGoals();
 
     await waitFor(() => {
-      expect(screen.getByText("Reserva de Emerg�ncia")).toBeInTheDocument();
+      expect(screen.getByText("Reserva de Emergência")).toBeInTheDocument();
     });
 
-    const completeBtn = screen.getByTitle("Marcar como conclu�da manualmente");
+    const completeBtn = screen.getByTitle("Marcar como concluída manualmente");
     fireEvent.click(completeBtn);
 
     await waitFor(() => {
@@ -192,11 +192,11 @@ describe("P�gina de Metas Financeiras - Fase 10", () => {
     });
   });
 
-  it("5. deve excluir meta ao clicar no bot�o de lixeira", async () => {
+  it("5. deve excluir meta ao clicar no botão de lixeira", async () => {
     renderGoals();
 
     await waitFor(() => {
-      expect(screen.getByText("Reserva de Emerg�ncia")).toBeInTheDocument();
+      expect(screen.getByText("Reserva de Emergência")).toBeInTheDocument();
     });
 
     const deleteBtns = screen.getAllByTitle("Excluir Meta");

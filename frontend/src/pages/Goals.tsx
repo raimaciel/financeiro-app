@@ -56,7 +56,7 @@ export default function Goals() {
     enabled: !!workspaceId,
   });
 
-  // Buscar contas banc�rias para vincular
+  // Buscar contas bancárias para vincular
   const { data: accounts = [] } = useQuery<BankAccount[]>({
     queryKey: ["bank_accounts", workspaceId],
     queryFn: async () => {
@@ -130,12 +130,12 @@ export default function Goals() {
   const handleCreateSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!goalName.trim()) {
-      setErrorMsg("O nome da meta � obrigat�rio.");
+      setErrorMsg("O nome da meta é obrigatório.");
       return;
     }
     const target = Number(targetAmount.replace(",", "."));
     if (isNaN(target) || target <= 0) {
-      setErrorMsg("O valor alvo deve ser um n�mero positivo.");
+      setErrorMsg("O valor alvo deve ser um número positivo.");
       return;
     }
 
@@ -184,7 +184,7 @@ export default function Goals() {
 
   return (
     <div className="space-y-6">
-      {/* Cabe�alho */}
+      {/* Cabeçalho */}
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
         <div>
           <h1 className="text-2xl font-bold tracking-tight text-slate-900 flex items-center gap-2">
@@ -273,8 +273,8 @@ export default function Goals() {
               <span className="text-xs text-slate-500">cadastradas</span>
             </div>
             <div className="flex gap-2 mt-1 text-xs">
-              <span className="text-emerald-600 font-medium">?? {summary.active_goals} ativas</span>
-              <span className="text-blue-600 font-medium">?? {summary.completed_goals} conclu�das</span>
+              <span className="text-emerald-600 font-medium">🎯 {summary.active_goals} ativas</span>
+              <span className="text-blue-600 font-medium">✓ {summary.completed_goals} concluídas</span>
             </div>
           </CardContent>
         </Card>
@@ -288,7 +288,7 @@ export default function Goals() {
           <Sparkles className="h-12 w-12 text-emerald-500 mx-auto opacity-80" />
           <h3 className="font-bold text-lg text-slate-900">Comece a planejar suas metas</h3>
           <p className="text-sm text-slate-500 max-w-md mx-auto">
-            Crie objetivos para sua reserva de emerg�ncia, f�rias, compra de bens ou investimentos e acompanhe cada aporte rumo ao seu alvo.
+            Crie objetivos para sua reserva de emergência, férias, compra de bens ou investimentos e acompanhe cada aporte rumo ao seu alvo.
           </p>
           <Button
             onClick={() => {
@@ -343,7 +343,7 @@ export default function Goals() {
                             : "bg-blue-100 text-blue-700"
                         }`}
                       >
-                        {isCompleted ? "Conclu�da ??" : "Em andamento"}
+                        {isCompleted ? "Concluída 🎉" : "Em andamento"}
                       </Badge>
                     </div>
                   </CardHeader>
@@ -376,7 +376,7 @@ export default function Goals() {
                         />
                       </div>
                       <div className="flex justify-between items-center text-xs font-semibold text-slate-500">
-                        <span>{percentage.toFixed(1)}% conclu�do</span>
+                        <span>{percentage.toFixed(1)}% concluído</span>
                         <span>
                           {item.remaining_amount > 0
                             ? `Faltam ${formatCurrency(item.remaining_amount)}`
@@ -401,7 +401,7 @@ export default function Goals() {
                             }`}
                           >
                             {item.days_remaining < 0
-                              ? `Vencido h� ${Math.abs(item.days_remaining)} dias`
+                              ? `Vencido há ${Math.abs(item.days_remaining)} dias`
                               : item.days_remaining === 0
                               ? "Vence hoje"
                               : `Faltam ${item.days_remaining} dias`}
@@ -412,7 +412,7 @@ export default function Goals() {
                   </CardContent>
                 </div>
 
-                {/* A��es do Card */}
+                {/* Ações do Card */}
                 <div className="p-4 bg-slate-50/70 border-t border-slate-100 flex items-center justify-between gap-2">
                   {!isCompleted ? (
                     <Button
@@ -426,7 +426,7 @@ export default function Goals() {
                   ) : (
                     <span className="text-xs font-bold text-emerald-700 flex items-center gap-1">
                       <CheckCircle2 className="h-4 w-4" />
-                      Objetivo Alcan�ado!
+                      Objetivo Alcançado!
                     </span>
                   )}
 
@@ -435,7 +435,7 @@ export default function Goals() {
                       <button
                         onClick={() => completeGoalMutation.mutate(item.id)}
                         className="p-2 text-slate-400 hover:text-emerald-600 rounded-md transition-colors text-xs font-medium"
-                        title="Marcar como conclu�da manualmente"
+                        title="Marcar como concluída manualmente"
                       >
                         <CheckCircle2 className="h-4 w-4" />
                       </button>
@@ -480,7 +480,7 @@ export default function Goals() {
                 <label className="block text-xs font-semibold text-slate-700 mb-1">Nome da Meta *</label>
                 <Input
                   type="text"
-                  placeholder="Ex: Reserva de Emerg�ncia, Carro Novo"
+                  placeholder="Ex: Reserva de Emergência, Carro Novo"
                   value={goalName}
                   onChange={(e) => setGoalName(e.target.value)}
                   required
@@ -603,7 +603,7 @@ export default function Goals() {
                   required
                 />
                 <span className="text-[11px] text-slate-400 mt-1 block">
-                  Este valor ser� somado ao saldo j� guardado nesta meta.
+                  Este valor será somado ao saldo já guardado nesta meta.
                 </span>
               </div>
 

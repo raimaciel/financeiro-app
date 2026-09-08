@@ -47,7 +47,7 @@ const mockBudgetsData = {
       id: "b-1",
       workspace_id: "ws-budgets-test",
       category_id: 1,
-      category_name: "Alimenta��o",
+      category_name: "Alimentação",
       category_color: "#ef4444",
       monthly_limit: 1000.0,
       spent_amount: 850.0,
@@ -73,7 +73,7 @@ const mockBudgetsData = {
 };
 
 const mockCategories = [
-  { id: 1, name: "Alimenta��o", type: "expense" },
+  { id: 1, name: "Alimentação", type: "expense" },
   { id: 2, name: "Transporte", type: "expense" },
   { id: 3, name: "Lazer", type: "expense" },
 ];
@@ -88,8 +88,8 @@ vi.mocked(api.get).mockImplementation((url: string) => {
   return Promise.resolve({ data: [] }) as any;
 });
 
-vi.mocked(api.post).mockResolvedValue({ data: { message: "Or�amento definido com sucesso!", id: "b-new" } } as any);
-vi.mocked(api.delete).mockResolvedValue({ data: { message: "Or�amento removido com sucesso!" } } as any);
+vi.mocked(api.post).mockResolvedValue({ data: { message: "Orçamento definido com sucesso!", id: "b-new" } } as any);
+vi.mocked(api.delete).mockResolvedValue({ data: { message: "Orçamento removido com sucesso!" } } as any);
 
 function renderBudgets() {
   const queryClient = new QueryClient({
@@ -104,45 +104,45 @@ function renderBudgets() {
   );
 }
 
-describe("P�gina de Or�amentos por Categoria - Fase 10", () => {
+describe("Página de Orçamentos por Categoria - Fase 10", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     window.localStorage.clear();
   });
 
-  it("1. deve renderizar o t�tulo, KPIs de resumo e a listagem de or�amentos", async () => {
+  it("1. deve renderizar o título, KPIs de resumo e a listagem de orçamentos", async () => {
     renderBudgets();
 
-    expect(screen.getByText("Or�amentos por Categoria")).toBeInTheDocument();
+    expect(screen.getByText("Orçamentos por Categoria")).toBeInTheDocument();
 
     await waitFor(() => {
-      expect(screen.getByText("Alimenta��o")).toBeInTheDocument();
+      expect(screen.getByText("Alimentação")).toBeInTheDocument();
       expect(screen.getByText("Transporte")).toBeInTheDocument();
       expect(screen.getByText("85.0%")).toBeInTheDocument();
       expect(screen.getByText("50.0%")).toBeInTheDocument();
     });
   });
 
-  it("2. deve exibir o status correto por cor e badges (Aten��o para 85% e Normal para 50%)", async () => {
+  it("2. deve exibir o status correto por cor e badges (Atenção para 85% e Normal para 50%)", async () => {
     renderBudgets();
 
     await waitFor(() => {
-      expect(screen.getByText("Aten��o")).toBeInTheDocument();
+      expect(screen.getByText("Atenção")).toBeInTheDocument();
       expect(screen.getByText("Normal")).toBeInTheDocument();
     });
   });
 
-  it("3. deve abrir o modal ao clicar em 'Definir Or�amento' e submeter com sucesso", async () => {
+  it("3. deve abrir o modal ao clicar em 'Definir Orçamento' e submeter com sucesso", async () => {
     renderBudgets();
 
     await waitFor(() => {
-      expect(screen.getByText("Alimenta��o")).toBeInTheDocument();
+      expect(screen.getByText("Alimentação")).toBeInTheDocument();
     });
 
-    const openModalBtn = screen.getByRole("button", { name: /Definir Or�amento/i });
+    const openModalBtn = screen.getByRole("button", { name: /Definir Orçamento/i });
     fireEvent.click(openModalBtn);
 
-    expect(screen.getByText("Definir Or�amento Mensal")).toBeInTheDocument();
+    expect(screen.getByText("Definir Orçamento Mensal")).toBeInTheDocument();
 
     // Seleciona categoria
     const categorySelect = screen.getByRole("combobox");
@@ -153,7 +153,7 @@ describe("P�gina de Or�amentos por Categoria - Fase 10", () => {
     fireEvent.change(limitInput, { target: { value: "600,00" } });
 
     // Submete
-    const saveBtn = screen.getByRole("button", { name: /Salvar Or�amento/i });
+    const saveBtn = screen.getByRole("button", { name: /Salvar Orçamento/i });
     fireEvent.click(saveBtn);
 
     await waitFor(() => {
@@ -167,14 +167,14 @@ describe("P�gina de Or�amentos por Categoria - Fase 10", () => {
     });
   });
 
-  it("4. deve disparar exclus�o ao clicar no �cone de lixeira", async () => {
+  it("4. deve disparar exclusão ao clicar no ícone de lixeira", async () => {
     renderBudgets();
 
     await waitFor(() => {
-      expect(screen.getByText("Alimenta��o")).toBeInTheDocument();
+      expect(screen.getByText("Alimentação")).toBeInTheDocument();
     });
 
-    const deleteBtns = screen.getAllByTitle("Excluir Or�amento");
+    const deleteBtns = screen.getAllByTitle("Excluir Orçamento");
     expect(deleteBtns.length).toBeGreaterThan(0);
 
     fireEvent.click(deleteBtns[0]);

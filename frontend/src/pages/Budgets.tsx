@@ -40,7 +40,7 @@ export default function Budgets() {
   const [alertThreshold, setAlertThreshold] = useState<number>(80);
   const [errorMsg, setErrorMsg] = useState("");
 
-  // Navega��o de m�s
+  // Navegação de mês
   const handlePrevMonth = () => {
     const [y, m] = currentMonth.split("-").map(Number);
     const prevDate = new Date(y, m - 2, 1);
@@ -53,7 +53,7 @@ export default function Budgets() {
     setCurrentMonth(nextDate.toISOString().slice(0, 7));
   };
 
-  // Buscar or�amentos do m�s
+  // Buscar orçamentos do mês
   const { data, isLoading } = useQuery<BudgetListResponse>({
     queryKey: ["budgets", workspaceId, currentMonth],
     queryFn: async () => {
@@ -63,7 +63,7 @@ export default function Budgets() {
     enabled: !!workspaceId,
   });
 
-  // Buscar categorias para o modal de or�amento
+  // Buscar categorias para o modal de orçamento
   const { data: categories = [] } = useQuery<Category[]>({
     queryKey: ["categories", workspaceId],
     queryFn: async () => {
@@ -73,7 +73,7 @@ export default function Budgets() {
     enabled: !!workspaceId,
   });
 
-  // Mutation: Upsert de or�amento
+  // Mutation: Upsert de orçamento
   const saveBudgetMutation = useMutation({
     mutationFn: async (payload: { category_id: number; limit_amount: number; month: string; alert_threshold_percent: number }) => {
       return api.post(`/workspaces/${workspaceId}/budgets`, payload);
@@ -86,11 +86,11 @@ export default function Budgets() {
       setErrorMsg("");
     },
     onError: (err: any) => {
-      setErrorMsg(err.response?.data?.error || "Erro ao salvar or�amento.");
+      setErrorMsg(err.response?.data?.error || "Erro ao salvar orçamento.");
     },
   });
 
-  // Mutation: Exclus�o de or�amento
+  // Mutation: Exclusão de orçamento
   const deleteBudgetMutation = useMutation({
     mutationFn: async (id: string) => {
       return api.delete(`/workspaces/${workspaceId}/budgets/${id}`);
@@ -124,7 +124,7 @@ export default function Budgets() {
     }
     const val = Number(limitAmount.replace(",", "."));
     if (isNaN(val) || val <= 0) {
-      setErrorMsg("Informe um limite mensal v�lido.");
+      setErrorMsg("Informe um limite mensal válido.");
       return;
     }
 
@@ -149,12 +149,12 @@ export default function Budgets() {
 
   return (
     <div className="space-y-6">
-      {/* Cabe�alho */}
+      {/* Cabeçalho */}
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
         <div>
           <h1 className="text-2xl font-bold tracking-tight text-slate-900 flex items-center gap-2">
             <PieChart className="h-6 w-6 text-primary" />
-            Or�amentos por Categoria
+            Orçamentos por Categoria
           </h1>
           <p className="text-sm text-slate-500 mt-1">
             Defina tetos de gastos mensais e acompanhe o consumo em tempo real.
@@ -162,11 +162,11 @@ export default function Budgets() {
         </div>
 
         <div className="flex items-center gap-3 w-full sm:w-auto">
-          {/* Seletor de M�s */}
+          {/* Seletor de Mês */}
           <div className="flex items-center bg-white border border-slate-200 rounded-lg shadow-2xs p-1">
             <button
               onClick={handlePrevMonth}
-              aria-label="M�s anterior"
+              aria-label="Mês anterior"
               className="p-1.5 text-slate-600 hover:text-slate-900 hover:bg-slate-100 rounded-md transition-colors"
             >
               <ChevronLeft className="h-4 w-4" />
@@ -175,7 +175,7 @@ export default function Budgets() {
               <Calendar className="h-4 w-4 text-primary" />
               <input
                 type="month"
-                aria-label="Selecionar M�s"
+                aria-label="Selecionar Mês"
                 value={currentMonth}
                 onChange={(e) => e.target.value && setCurrentMonth(e.target.value)}
                 className="font-semibold text-sm bg-transparent border-none focus:outline-hidden cursor-pointer"
@@ -183,7 +183,7 @@ export default function Budgets() {
             </div>
             <button
               onClick={handleNextMonth}
-              aria-label="Pr�ximo m�s"
+              aria-label="Próximo mês"
               className="p-1.5 text-slate-600 hover:text-slate-900 hover:bg-slate-100 rounded-md transition-colors"
             >
               <ChevronRight className="h-4 w-4" />
@@ -192,7 +192,7 @@ export default function Budgets() {
 
           <Button onClick={handleOpenCreateModal} className="flex items-center gap-1.5 shadow-xs">
             <Plus className="h-4 w-4" />
-            Definir Or�amento
+            Definir Orçamento
           </Button>
         </div>
       </div>
@@ -202,7 +202,7 @@ export default function Budgets() {
         <Card className="border-slate-200 shadow-2xs">
           <CardHeader className="flex flex-row items-center justify-between pb-2">
             <CardTitle className="text-xs font-semibold text-slate-500 uppercase tracking-wider">
-              Total Or�ado
+              Total Orçado
             </CardTitle>
             <Wallet className="h-4 w-4 text-blue-600" />
           </CardHeader>
@@ -210,7 +210,7 @@ export default function Budgets() {
             <div className="text-2xl font-bold text-slate-900">
               {formatCurrency(summary.total_budgeted)}
             </div>
-            <p className="text-xs text-slate-500 mt-1">Limite total definido para o m�s</p>
+            <p className="text-xs text-slate-500 mt-1">Limite total definido para o mês</p>
           </CardContent>
         </Card>
 
@@ -225,7 +225,7 @@ export default function Budgets() {
             <div className="text-2xl font-bold text-rose-600">
               {formatCurrency(summary.total_spent)}
             </div>
-            <p className="text-xs text-slate-500 mt-1">Gasto real nas categorias or�adas</p>
+            <p className="text-xs text-slate-500 mt-1">Gasto real nas categorias orçadas</p>
           </CardContent>
         </Card>
 
@@ -245,7 +245,7 @@ export default function Budgets() {
               {formatCurrency(summary.total_remaining)}
             </div>
             <p className="text-xs text-slate-500 mt-1">
-              {summary.total_remaining >= 0 ? "Dispon�vel para gastar" : "Or�amento estourado"}
+              {summary.total_remaining >= 0 ? "Disponível para gastar" : "Orçamento estourado"}
             </p>
           </CardContent>
         </Card>
@@ -266,20 +266,20 @@ export default function Budgets() {
             </div>
             <div className="flex gap-2 mt-1 text-xs">
               {summary.warning_count > 0 && (
-                <span className="text-amber-600 font-medium">?? {summary.warning_count} aten��o</span>
+                <span className="text-amber-600 font-medium">⚠️ {summary.warning_count} atenção</span>
               )}
               {summary.exceeded_count > 0 && (
-                <span className="text-rose-600 font-medium">?? {summary.exceeded_count} excedido(s)</span>
+                <span className="text-rose-600 font-medium">🚨 {summary.exceeded_count} excedido(s)</span>
               )}
               {summary.warning_count === 0 && summary.exceeded_count === 0 && (
-                <span className="text-emerald-600 font-medium">? Tudo sob controle</span>
+                <span className="text-emerald-600 font-medium">✓ Tudo sob controle</span>
               )}
             </div>
           </CardContent>
         </Card>
       </div>
 
-      {/* Lista de Or�amentos */}
+      {/* Lista de Orçamentos */}
       <Card className="border-slate-200 shadow-2xs">
         <CardHeader className="border-b border-slate-100 bg-slate-50/50 py-4">
           <CardTitle className="text-base font-bold text-slate-900">
@@ -288,17 +288,17 @@ export default function Budgets() {
         </CardHeader>
         <CardContent className="p-0">
           {isLoading ? (
-            <div className="p-8 text-center text-sm text-slate-500">Carregando or�amentos...</div>
+            <div className="p-8 text-center text-sm text-slate-500">Carregando orçamentos...</div>
           ) : budgets.length === 0 ? (
             <div className="p-12 text-center space-y-3">
               <Sparkles className="h-10 w-10 text-slate-300 mx-auto" />
-              <h3 className="font-semibold text-base text-slate-700">Nenhum or�amento para este m�s</h3>
+              <h3 className="font-semibold text-base text-slate-700">Nenhum orçamento para este mês</h3>
               <p className="text-sm text-slate-400 max-w-sm mx-auto">
-                Defina limites para suas categorias essenciais para receber alertas autom�ticos antes de estourar seus gastos.
+                Defina limites para suas categorias essenciais para receber alertas automáticos antes de estourar seus gastos.
               </p>
               <Button onClick={handleOpenCreateModal} variant="outline" className="mt-2">
                 <Plus className="h-4 w-4 mr-1.5" />
-                Definir Primeiro Or�amento
+                Definir Primeiro Orçamento
               </Button>
             </div>
           ) : (
@@ -320,7 +320,7 @@ export default function Budgets() {
                   ? "bg-amber-100 text-amber-700"
                   : "bg-emerald-100 text-emerald-700";
 
-                const badgeText = isExceeded ? "Excedido" : isWarning ? "Aten��o" : "Normal";
+                const badgeText = isExceeded ? "Excedido" : isWarning ? "Atenção" : "Normal";
 
                 return (
                   <div key={item.id} className="p-5 hover:bg-slate-50/60 transition-colors">
@@ -358,7 +358,7 @@ export default function Budgets() {
                           <button
                             onClick={() => deleteBudgetMutation.mutate(item.id)}
                             className="p-1 text-slate-400 hover:text-rose-600 rounded-md transition-colors"
-                            title="Excluir Or�amento"
+                            title="Excluir Orçamento"
                           >
                             <Trash2 className="h-4 w-4" />
                           </button>
@@ -390,12 +390,12 @@ export default function Budgets() {
         </CardContent>
       </Card>
 
-      {/* Modal de Definir / Editar Or�amento */}
+      {/* Modal de Definir / Editar Orçamento */}
       {isModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 backdrop-blur-xs p-4 animate-in fade-in">
           <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-md p-6 space-y-4">
             <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-              <h3 className="font-bold text-lg text-slate-900">Definir Or�amento Mensal</h3>
+              <h3 className="font-bold text-lg text-slate-900">Definir Orçamento Mensal</h3>
               <button
                 onClick={() => setIsModalOpen(false)}
                 className="text-slate-400 hover:text-slate-600 text-lg leading-none"
@@ -445,7 +445,7 @@ export default function Budgets() {
 
               <div>
                 <label className="block text-xs font-semibold text-slate-700 mb-1">
-                  M�s de Refer�ncia
+                  Mês de Referência
                 </label>
                 <Input
                   type="month"
@@ -467,7 +467,7 @@ export default function Budgets() {
                   onChange={(e) => setAlertThreshold(Number(e.target.value))}
                 />
                 <span className="text-[11px] text-slate-400">
-                  Notifica quando atingir este percentual (padr�o 80%).
+                  Notifica quando atingir este percentual (padrão 80%).
                 </span>
               </div>
 
@@ -476,7 +476,7 @@ export default function Budgets() {
                   Cancelar
                 </Button>
                 <Button type="submit" disabled={saveBudgetMutation.isPending}>
-                  {saveBudgetMutation.isPending ? "Salvando..." : "Salvar Or�amento"}
+                  {saveBudgetMutation.isPending ? "Salvando..." : "Salvar Orçamento"}
                 </Button>
               </div>
             </form>

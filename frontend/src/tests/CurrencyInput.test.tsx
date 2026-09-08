@@ -10,7 +10,7 @@ describe("CurrencyInput", () => {
     expect(input).toHaveAttribute("placeholder", "0,00");
   });
 
-  it("deve formatar valor inicial numérico como moeda brasileira (9300 -> 9.300,00)", () => {
+  it("deve formatar valor inicial numÃ©rico como moeda brasileira (9300 -> 9.300,00)", () => {
     render(<CurrencyInput value={9300} />);
     const input = screen.getByRole("textbox") as HTMLInputElement;
     expect(input.value).toBe("9.300,00");
@@ -21,20 +21,20 @@ describe("CurrencyInput", () => {
     render(<CurrencyInput onChange={handleChange} />);
     const input = screen.getByRole("textbox") as HTMLInputElement;
 
-    // Simula digitação "5000"
+    // Simula digitaÃ§Ã£o "5000"
     fireEvent.change(input, { target: { value: "5000" } });
 
     expect(handleChange).toHaveBeenCalledWith(50);
     expect(input.value).toBe("50,00");
   });
 
-  it("deve lidar com remoção de dígitos (backspace)", () => {
+  it("deve lidar com remoÃ§Ã£o de dÃ­gitos (backspace)", () => {
     const handleChange = vi.fn();
     render(<CurrencyInput value={50} onChange={handleChange} />);
     const input = screen.getByRole("textbox") as HTMLInputElement;
     expect(input.value).toBe("50,00");
 
-    // Simula remoção do último dígito (de 5000 para 500)
+    // Simula remoÃ§Ã£o do Ãºltimo dÃ­gito (de 5000 para 500)
     fireEvent.change(input, { target: { value: "5,00" } });
     expect(handleChange).toHaveBeenCalledWith(5);
   });

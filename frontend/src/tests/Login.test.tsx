@@ -28,8 +28,8 @@ function renderLogin() {
   );
 }
 
-describe("Página de Login", () => {
-  it("deve renderizar o título e campos do formulário", () => {
+describe("PÃ¡gina de Login", () => {
+  it("deve renderizar o tÃ­tulo e campos do formulÃ¡rio", () => {
     renderLogin();
     expect(screen.getByText(/acesse sua conta/i)).toBeInTheDocument();
     expect(screen.getByLabelText(/e-mail/i)).toBeInTheDocument();
@@ -37,7 +37,7 @@ describe("Página de Login", () => {
     expect(screen.getByRole("button", { name: /entrar/i })).toBeInTheDocument();
   });
 
-  it("deve aceitar digitação nos campos e submeter com sucesso", async () => {
+  it("deve aceitar digitaÃ§Ã£o nos campos e submeter com sucesso", async () => {
     renderLogin();
     const emailInput = screen.getByLabelText(/e-mail/i);
     const passInput = screen.getByLabelText(/senha/i);

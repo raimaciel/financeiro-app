@@ -1,4 +1,4 @@
-﻿import React from "react";
+import React from "react";
 import { NavLink, Outlet, useNavigate } from "react-router-dom";
 import { useAuth } from "@/hooks/useAuth";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
@@ -127,7 +127,7 @@ export const Layout: React.FC = () => {
                 }
               >
                 <CreditCard className="h-4 w-4" />
-                CartÃµes
+                Cartões
               </NavLink>
 
               <NavLink
@@ -163,7 +163,7 @@ export const Layout: React.FC = () => {
                 }
               >
                 <Repeat className="h-4 w-4" />
-                RecorrÃªncias
+                Recorrências
               </NavLink>
 
               <NavLink
@@ -187,7 +187,7 @@ export const Layout: React.FC = () => {
                 }
               >
                 <ArrowLeftRight className="h-4 w-4" />
-                TransaÃ§Ãµes
+                Transações
               </NavLink>
               <NavLink
                 to="/reports"
@@ -198,7 +198,7 @@ export const Layout: React.FC = () => {
                 }
               >
                 <BarChart3 className="h-4 w-4" />
-                RelatÃ³rios
+                Relatórios
               </NavLink>
 
 
@@ -224,7 +224,7 @@ export const Layout: React.FC = () => {
                   }
                 >
                   <ShieldCheck className="h-4 w-4" />
-                  UsuÃ¡rios (Admin)
+                  Usuários (Admin)
                 </NavLink>
               )}
             </nav>
@@ -274,7 +274,7 @@ export const Layout: React.FC = () => {
               </NavLink>
             )}
 
-            {/* Sino de NotificaÃ§Ãµes Global */}
+            {/* Sino de Notificações Global */}
             {activeWorkspaceId && (
               <NotificationsPopover workspaceId={activeWorkspaceId} />
             )}
